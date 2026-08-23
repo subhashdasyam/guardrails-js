@@ -1,7 +1,7 @@
 {
   "name": "guardrails-js",
   "displayName": "guardrails-js",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Tells Claude when the JavaScript it wrote is unsafe or slow, so it fixes it in the same turn. Node, React, Next, Vue, Nuxt, Angular, Svelte, NestJS, tRPC. No Python, no model calls.",
   "author": {
     "name": "Subhash Dasyam",
@@ -29,19 +29,19 @@
     "network": {
       "type": "boolean",
       "title": "Look up packages online",
-      "description": "Ask osv.dev and the npm registry about packages before install. Sends package names off your machine. Offline checks still run when this is off.",
+      "description": "Ask osv.dev and the npm registry about a package before it installs, which catches a known vulnerable version of a package you already trust. Package names leave your machine. Offline checks keep working when this is off.",
       "default": true
     },
     "min_severity": {
       "type": "string",
       "title": "Lowest severity to report",
-      "description": "One of critical, high, medium, low, perf.",
-      "default": "low"
+      "description": "One of perf, low, medium, high, critical. Anything below the level you pick is dropped before you see it. The default of perf means everything is reported. Choosing medium switches off the whole performance pack, because those findings sit below low.",
+      "default": "perf"
     },
     "priming": {
       "type": "boolean",
       "title": "Send rules at session start",
-      "description": "Give Claude a short rule set for your stack when a session starts.",
+      "description": "At the start of a session, give Claude a short rule set for the stack this project actually uses. Costs about a thousand tokens once per session.",
       "default": true
     }
   }

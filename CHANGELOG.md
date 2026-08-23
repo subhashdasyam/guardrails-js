@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.2
+
+The settings panel advertised a default that did not match the code.
+
+min_severity was shown as defaulting to `low`, while the code has defaulted to
+`perf` since the performance pack shipped. Performance findings sit below low,
+so anyone who accepted the panel default switched off all thirteen performance
+rules without being told. Fixed, and the descriptions now say what each option
+actually does rather than restating its name.
+
+A test now asserts the panel defaults match the code defaults, so the two cannot
+drift again. Verified by putting the mismatch back and watching it fail.
+
 ## 1.1.1
 
 Fixes an install failure. The plugin would install and then refuse to load:

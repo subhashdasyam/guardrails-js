@@ -104,6 +104,37 @@ test('the manifest carries what a listing needs', () => {
   assert.match(plugin.name, /^[a-z0-9-]+$/, 'the name is used for command prefixes');
 });
 
+test('the settings panel advertises the same defaults the code uses', async () => {
+  // The panel said min_severity defaulted to "low" while the code defaulted to
+  // "perf". Anyone accepting the panel default got the entire performance pack
+  // switched off without being told, because perf sits below low.
+  const { loadConfig } = await import('../src/engine/config.js');
+
+  // Read the code defaults with no project config and no plugin options set.
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith('CLAUDE_PLUGIN_OPTION_')) delete process.env[key];
+  }
+  const code = loadConfig('/nonexistent-so-defaults-apply');
+
+  const pairs = [
+    ['network', code.network],
+    ['min_severity', code.minSeverity],
+    ['priming', code.priming],
+  ];
+
+  for (const [panelKey, codeDefault] of pairs) {
+    const option = plugin.userConfig?.[panelKey];
+    assert.ok(option, `plugin.json has no userConfig entry for ${panelKey}`);
+    assert.equal(
+      option.default,
+      codeDefault,
+      `the settings panel says ${panelKey} defaults to ${JSON.stringify(option.default)} ` +
+        `but the code uses ${JSON.stringify(codeDefault)}. Accepting the panel default would ` +
+        'then change behaviour without anyone asking for it.',
+    );
+  }
+});
+
 test('user config options are shaped the way the harness expects', () => {
   for (const [key, option] of Object.entries(plugin.userConfig ?? {})) {
     assert.match(key, /^[a-z0-9_]+$/, `${key} becomes an env var suffix, so keep it plain`);
