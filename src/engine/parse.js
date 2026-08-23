@@ -25,11 +25,13 @@ export const SUPPORTED_EXTENSIONS = new Set([
   '.mts',
   '.cts',
   '.vue',
+  '.svelte',
 ]);
 
 export function languageOf(filePath) {
   const lower = String(filePath).toLowerCase();
   if (lower.endsWith('.vue')) return 'vue';
+  if (lower.endsWith('.svelte')) return 'svelte';
   if (lower.endsWith('.tsx')) return 'tsx';
   if (lower.endsWith('.jsx')) return 'jsx';
   if (lower.endsWith('.ts') || lower.endsWith('.mts') || lower.endsWith('.cts')) return 'ts';
@@ -37,13 +39,13 @@ export function languageOf(filePath) {
 }
 
 /**
- * Blank out everything in a .vue file except the contents of <script> blocks,
- * replacing each removed character with a space and keeping newlines. Offsets
- * and line numbers in the result match the original file exactly, so findings
- * point at the right line without any mapping table.
+ * Blank out everything in a .vue or .svelte file except the contents of its
+ * <script> blocks, replacing each removed character with a space and keeping
+ * newlines. Offsets and line numbers in the result match the original file
+ * exactly, so findings point at the right line with no mapping table.
  *
- * Template rules (v-html and friends) land in v0.4 and will use the real Vue
- * compiler. For now we only look at script blocks.
+ * Markup is handled separately by the template rules. Both formats put their
+ * code in <script>, so one function covers them.
  */
 export function blankOutsideScript(source) {
   const buffer = Array.from(source, (ch) => (ch === '\n' ? '\n' : ' '));
@@ -86,7 +88,7 @@ export function parseSource(source, filePath) {
   let language = languageOf(filePath);
   let code = source;
 
-  if (language === 'vue') {
+  if (language === 'vue' || language === 'svelte') {
     const extracted = blankOutsideScript(source);
     if (!extracted.found) return { error: 'no script block' };
     code = extracted.code;

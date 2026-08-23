@@ -2,7 +2,7 @@
 
 A Claude Code plugin that tells Claude when the JavaScript it just wrote is unsafe or slow, so Claude fixes it in the same turn.
 
-**v1.0**: 78 rules covering security and performance across Node, Express, Fastify, NestJS, React, Next.js, Vue, and Nuxt, plus dependency version checks, the npm install gate, session priming, a repo audit command, and a CLI for CI. See the [changelog](CHANGELOG.md) and the [design notes](docs/PLAN.md).
+**v1.1**: 87 rules covering security and performance across Node, Express, Fastify, NestJS, tRPC, React, Next.js, Vue, Nuxt, Angular, and Svelte, plus dependency version checks, the npm install gate, session priming, a repo audit command, and a CLI for CI. See the [changelog](CHANGELOG.md) and the [design notes](docs/PLAN.md).
 
 ## The problem
 
@@ -75,7 +75,7 @@ They use different hooks and do not fight each other. Run both.
 
 ## What it checks today
 
-78 rules plus 4 dependency advisories, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
+87 rules plus 4 dependency advisories, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
 
 Injection and interpreters, A05:
 
@@ -146,6 +146,25 @@ Vue and Nuxt:
 | VITE-HOST | A dev server bound to every interface |
 | NUXT-ROUTE-RULES | Route rules covering a sensitive path, which is rendering config and not authorization |
 
+Backend authorization. Both frameworks make authorization a decoration rather than a statement, so a missing one reads exactly like a present one:
+
+| Rule | What it catches |
+|---|---|
+| NEST-GUARD | A mutating route with no `@UseGuards`, in a controller that guards its other routes |
+| NEST-PUBLIC | `@Public()` on a sensitive or state changing route |
+| NEST-WHITELIST | `ValidationPipe` without `whitelist`, so undeclared fields pass through |
+| TRPC-PUBLIC | A mutation started from a public builder in a router that has a protected one |
+| TRPC-INPUT | A resolver reading `input` with no `.input(schema)` in the chain |
+
+Angular and Svelte. Same sinks as React and Vue under different names:
+
+| Rule | What it catches |
+|---|---|
+| NG-BYPASS | `bypassSecurityTrust*` on anything that is not a reviewed constant |
+| NG-INNERHTML | `[innerHTML]` in an inline component template |
+| SVELTE-HTML | `{@html}` with no sanitiser |
+| SVELTE-URL | `href={...}` with no protocol check |
+
 Supply chain, A03. These take a project rather than a syntax tree, so they read `package.json`, the lockfile, `.npmrc`, and your CI:
 
 | Rule | What it catches |
@@ -186,7 +205,9 @@ There is deliberately no rule for missing `useMemo`. React's own documentation s
 
 Version checks read the lockfile when there is one, because that is the version you actually installed. With no lockfile they fall back to the lowest version the range allows and drop a severity level, since a range such as `^15.1.0` may already resolve to something patched.
 
-Vue single file components are handled in two halves. The `<script>` block is parsed properly, with byte offsets preserved so line numbers need no mapping. The `<template>` block goes through a small attribute scanner rather than the real Vue compiler, which keeps the bundle less than half the size it would otherwise be. The scanner handles nesting, quoted values, comments, and shorthand bindings, and it does not handle dynamic attribute names such as `:[key]`. Those come out as no match rather than a wrong match, so the failure direction is a missed finding and never a false one.
+Vue and Svelte single file components are handled in two halves. The `<script>` block is parsed properly, with byte offsets preserved so line numbers need no mapping. The markup goes through a small attribute scanner rather than the framework's own compiler.
+
+That is a measured decision, not a guess. `@vue/compiler-dom` is 1248 KB bundled and costs about 30 ms to load, against 727 KB and 20 ms for the entire plugin. It would nearly triple the bundle for rules that only read attribute names. So the real parser is a dev dependency, never shipped, and `test/vue-parity.test.mjs` holds the scanner against it on 18 cases chosen to break a hand written scanner: a greater than sign inside a quoted value, a less than sign in a text node, comments containing tags, unquoted values, attributes across several lines, escaped markup inside `pre`. They agree on all of them. If that ever stops being true, the test says so, and that is the point at which the 1248 KB becomes worth paying.
 
 Rules that need to reason across functions to be sure, such as IDOR-01, AUTHZ-01, and CSRF-01, ship at medium severity and stay on the quiet channel. They are prompts to look, not accusations.
 
@@ -242,7 +263,7 @@ Nothing else ever leaves your machine. File contents are never sent anywhere.
 
 ```bash
 npm ci --ignore-scripts
-npm test              # 309 rule, engine, supply chain, and dependency tests
+npm test              # 360 rule, engine, parity, supply chain, and dependency tests
 npm run build         # rebuild dist/, which is committed
 npm run check:dist    # fail if the committed bundle is stale
 npm run bench         # latency budget
@@ -257,10 +278,10 @@ The latency gate measures the plugin, not the machine, because absolute wall clo
 
 Nothing is promised. Things worth doing, roughly in order of how much they would help:
 
-- More rules for NestJS guards and tRPC procedures, where authorization is easy to leave out and hard to see.
-- A real Vue template parse, if the bundle cost stops mattering or the scanner starts missing things people hit.
-- Angular and Svelte, which share most of the same sinks under different names.
-- A wider popular package list so the install gate asks less often about real dependencies.
+- Measure what the ruleset misses. The corpus gate shapes the rules against false positives and nothing yet measures false negatives. Running it against NodeGoat and Juice Shop would give a number.
+- Angular templates in `.html` files. Only inline component templates are read today, and most Angular projects keep theirs in separate files.
+- Svelte 5 runes. The rules read the markup and the script, but `$state` and `$derived` change where values come from.
+- A denylist that updates itself between releases without becoming a remote code path.
 
 If a rule fires on correct code, that is a bug worth reporting. The false positive corpus in `test/corpus/` exists precisely so those get fixed rather than tolerated.
 

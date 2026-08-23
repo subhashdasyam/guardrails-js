@@ -83,6 +83,74 @@ export function majorOf(range) {
   return match ? Number(match[1]) : null;
 }
 
+export const SANITIZER_PATTERN = /(DOMPurify|purify|sanitize|xss|clean)\s*[.(]/i;
+
+/**
+ * What a local name was assigned from, as raw text. Handles the three
+ * declaration forms plus Svelte's reactive `$:` assignment.
+ *
+ * This exists because checking only the expression at the sink misses the
+ * normal way people write this: sanitise once into a variable, then use the
+ * variable. Reading `{@html safeBody}` without looking at where safeBody came
+ * from produces a false positive on correct code.
+ */
+export function bindingInitializer(name, source) {
+  if (!/^[A-Za-z_$][\w$]*$/.test(String(name))) return null;
+
+  const pattern = new RegExp(
+    `(?:const|let|var)\\s+${name}\\s*=\\s*([^;\\n]+)|\\$:\\s*${name}\\s*=\\s*([^;\\n]+)`,
+  );
+  const match = pattern.exec(source);
+  if (!match) return null;
+
+  return (match[1] ?? match[2] ?? '').trim() || null;
+}
+
+/** Did this value go through a sanitiser, here or where it was assigned? */
+export function looksSanitized(node, ctx) {
+  if (!node) return false;
+  if (isLiteral(node)) return true;
+
+  if (isCall(node)) {
+    const name = memberName(node.callee);
+    if (name && SANITIZER_PATTERN.test(name)) return true;
+  }
+
+  if (node.type === 'ConditionalExpression') {
+    return looksSanitized(node.consequent, ctx) && looksSanitized(node.alternate, ctx);
+  }
+
+  if (node.type === 'Identifier') {
+    const initializer = bindingInitializer(node.name, ctx.source);
+    if (initializer && SANITIZER_PATTERN.test(initializer)) return true;
+  }
+
+  return false;
+}
+
+/** Is this a constant the author wrote, rather than data from outside? */
+export function looksConstant(node, ctx) {
+  if (!node) return false;
+  if (isLiteral(node)) return true;
+
+  if (node.type === 'Identifier') {
+    const initializer = bindingInitializer(node.name, ctx.source);
+    if (initializer && /^['"`]/.test(initializer)) return true;
+  }
+
+  return false;
+}
+
+/** The same question for template and markup rules, which have text not nodes. */
+export function expressionLooksSanitized(expression, source) {
+  const text = String(expression ?? '').trim();
+  if (!text) return false;
+  if (SANITIZER_PATTERN.test(text)) return true;
+
+  const initializer = bindingInitializer(text, source);
+  return Boolean(initializer && SANITIZER_PATTERN.test(initializer));
+}
+
 export function fileLooksLikeTest(filePath) {
   return /(^|[/\\])(test|tests|__tests__|spec|fixtures?|mocks?|e2e)([/\\]|$)|\.(test|spec)\.[cm]?[jt]sx?$/i.test(
     String(filePath),

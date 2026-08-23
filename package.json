@@ -1,6 +1,6 @@
 {
   "name": "guardrails-js",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Claude Code plugin that tells Claude when the JavaScript it wrote is unsafe or slow",
@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@babel/parser": "^7.26.3",
+    "@vue/compiler-dom": "^3.5.41",
     "esbuild": "^0.24.2"
   }
 }

@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.1.0
+
+Nine more rules, Svelte support, and a much larger package list.
+
+### NestJS and tRPC
+
+Both frameworks make authorization a decoration rather than a statement, so a route missing one reads exactly like a route that has one.
+
+- `NEST-GUARD` fires on a mutating route with no `@UseGuards`, but only in a controller that guards its other routes. A controller where nothing is guarded is far more likely to be covered by a global `APP_GUARD`, and saying otherwise would be noise.
+- `NEST-PUBLIC` fires on `@Public()` over a sensitive or state changing route.
+- `NEST-WHITELIST` fires on a `ValidationPipe` without `whitelist`, which validates undeclared properties as absent and then passes them through anyway.
+- `TRPC-PUBLIC` fires on a mutation started from a public builder, in a router that has a protected one to use.
+- `TRPC-INPUT` fires on a resolver that reads `input` with no `.input(schema)` in the chain, where the TypeScript type is a comment rather than a check.
+
+### Angular and Svelte
+
+Same sinks as React and Vue under different names. `.svelte` files are now parsed, so the script block gets all the existing rules as well.
+
+- `NG-BYPASS` on `bypassSecurityTrust*` with anything that is not a reviewed constant.
+- `NG-INNERHTML` on `[innerHTML]` in an inline component template.
+- `SVELTE-HTML` on `{@html}` with no sanitiser.
+- `SVELTE-URL` on `href={...}` with no protocol check.
+
+### The Vue parser question, settled with a measurement
+
+The plan said to switch to the real Vue compiler if the bundle cost stopped mattering or the scanner started missing things. Neither happened, and now there is evidence rather than an opinion.
+
+`@vue/compiler-dom` is 1248 KB bundled and costs about 30 ms to load, against 727 KB and 20 ms for the whole plugin. Full `@vue/compiler-sfc` will not bundle at all: it pulls in `consolidate` and 39 optional template engines.
+
+So the real parser is now a dev dependency, never shipped, and `test/vue-parity.test.mjs` holds the scanner against it on 18 cases picked to break a hand written scanner. They agree on all 18. If that ever stops being true, the test says so, and that is when the 1248 KB becomes worth paying.
+
+### A wider package list
+
+The install gate's known package list went from 336 names to 3292, so it asks far less often about real dependencies. The refresh script was quietly broken: it paged the npm search API one letter at a time, and single letters return nothing, so every run collected zero names and left the file alone. It now walks a list of the subjects packages are actually about.
+
+### Fixes
+
+Two false positives the corpus caught, both the same root cause: rules checked the expression at the sink without looking at what it was bound to. Sanitising once into a variable and then using the variable is the normal way to write this, and it was being flagged. `{@html safeBody}` where `safeBody` came from `DOMPurify.sanitize`, and an Angular bypass of a module level URL constant. There is now one shared resolver for both questions, used by the React, Vue, Angular, and Svelte rules.
+
+
 ## 1.0.0
 
 First release. 78 rules and 4 dependency advisories, three hooks, two commands, three skills, and a CLI for CI.

@@ -114,11 +114,42 @@ function parseAttributes(text, base) {
 }
 
 /**
- * Walk the template and hand back every element with its attributes.
+ * Blank out whole blocks, keeping newlines and every offset in place. Used to
+ * take script and style out of a Svelte file so only markup is left.
+ */
+export function blankBlocks(source, tags) {
+  const buffer = Array.from(source);
+
+  for (const tag of tags) {
+    const pattern = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?</${tag}>`, 'gi');
+    let match;
+    while ((match = pattern.exec(source)) !== null) {
+      for (let i = match.index; i < match.index + match[0].length; i += 1) {
+        if (buffer[i] !== '\n') buffer[i] = ' ';
+      }
+    }
+  }
+
+  return buffer.join('');
+}
+
+/**
+ * Where the markup lives. Vue keeps it in a <template> block. Svelte has no
+ * wrapper, so it is everything that is not script or style.
+ */
+export function markupRegion(source, kind = 'vue') {
+  if (kind === 'svelte') {
+    return { start: 0, end: source.length, content: blankBlocks(source, ['script', 'style']) };
+  }
+  return extractTemplateBlock(source);
+}
+
+/**
+ * Walk the markup and hand back every element with its attributes.
  * Offsets are absolute into the original source.
  */
-export function scanTemplate(source) {
-  const block = extractTemplateBlock(source);
+export function scanTemplate(source, kind = 'vue') {
+  const block = markupRegion(source, kind);
   if (!block) return [];
 
   const elements = [];

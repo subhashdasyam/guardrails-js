@@ -12,6 +12,8 @@ import vueRules from './vue/vue.js';
 import perfNode from './perf-node/perf.js';
 import perfFrontend from './perf-react/perf.js';
 import supply from './supply/manifest.js';
+import nestTrpc from './backend/nest-trpc.js';
+import angularSvelte from './frontend/angular-svelte.js';
 
 export const PACKS = {
   'node-core': [...injection, ...ssrf, ...deserialization, ...secretsConfig, ...prototypePollution],
@@ -22,6 +24,8 @@ export const PACKS = {
   'perf-node': [...perfNode],
   'perf-frontend': [...perfFrontend],
   supply: [...supply],
+  backend: [...nestTrpc],
+  frontend: [...angularSvelte],
 };
 
 export const RULES = Object.values(PACKS).flat();

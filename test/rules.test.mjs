@@ -11,8 +11,10 @@ import prototypePollution from './cases/prototype-pollution.js';
 import react from './cases/react.js';
 import vue from './cases/vue.js';
 import perf from './cases/perf.js';
+import backend from './cases/backend.js';
+import frontend from './cases/frontend.js';
 
-const cases = [...nodeCore, ...nodeAuth, ...nodeDos, ...prototypePollution, ...react, ...vue, ...perf];
+const cases = [...nodeCore, ...nodeAuth, ...nodeDos, ...prototypePollution, ...react, ...vue, ...perf, ...backend, ...frontend];
 
 const config = loadConfig('/nonexistent-so-defaults-apply');
 
@@ -88,13 +90,16 @@ test('rule metadata is complete', () => {
     assert.ok(rule.owasp2025, `${rule.id} has no OWASP category`);
     assert.ok(Array.isArray(rule.cwe) && rule.cwe.length > 0, `${rule.id} has no CWE`);
     assert.ok(rule.fix, `${rule.id} has no fix`);
-    const matcher =
-      rule.target === 'template'
-        ? rule.matchTemplate
-        : rule.target === 'manifest'
-          ? rule.matchManifest
-          : rule.match;
-    assert.ok(typeof matcher === 'function', `${rule.id} has no matcher`);
+    const matchers = {
+      template: rule.matchTemplate,
+      markup: rule.matchMarkup,
+      manifest: rule.matchManifest,
+    };
+    const matcher = matchers[rule.target] ?? rule.match;
+    assert.ok(
+      typeof matcher === 'function',
+      `${rule.id} has target ${rule.target ?? 'ast'} but no matching function`,
+    );
     assert.match(rule.owasp2025, /^A(0[1-9]|10)$/, `${rule.id} OWASP id looks wrong`);
   }
 });

@@ -2,9 +2,14 @@
 // over the AST like everything else.
 
 import { bindingName, findAttribute } from '../../engine/vue-template.js';
-import { memberName, lastSegment, staticString, objectValue, isTrue } from '../helpers.js';
-
-const SANITIZER = /(DOMPurify|purify|sanitize|xss|clean)\s*[.(]/i;
+import {
+  memberName,
+  lastSegment,
+  staticString,
+  objectValue,
+  isTrue,
+  expressionLooksSanitized,
+} from '../helpers.js';
 
 export const XSS_03 = {
   id: 'XSS-03',
@@ -21,7 +26,7 @@ export const XSS_03 = {
     );
     if (!attribute || !attribute.value) return null;
 
-    if (SANITIZER.test(attribute.value)) return null;
+    if (expressionLooksSanitized(attribute.value, ctx.source)) return null;
 
     return {
       offset: attribute.valueStart ?? attribute.nameStart,

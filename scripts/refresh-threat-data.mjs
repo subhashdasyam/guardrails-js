@@ -67,33 +67,66 @@ function collectMalicious(osvDir) {
   return found;
 }
 
-/** Popular package names, used for typosquat distance. */
+// The npm search API returns nothing for a single letter, so paging the
+// alphabet collected zero names and the refresh quietly did nothing. Real words
+// work, so this walks the subjects packages are actually about. Results come
+// back ordered by popularity, which is the part worth keeping.
+const SEED_TERMS = [
+  'react', 'vue', 'angular', 'svelte', 'node', 'express', 'typescript', 'javascript',
+  'cli', 'test', 'build', 'bundler', 'lint', 'format', 'http', 'server', 'client',
+  'api', 'rest', 'graphql', 'websocket', 'database', 'sql', 'orm', 'mongodb', 'redis',
+  'auth', 'oauth', 'jwt', 'crypto', 'hash', 'security', 'validation', 'schema',
+  'parser', 'compiler', 'transform', 'ast', 'stream', 'buffer', 'promise', 'async',
+  'date', 'time', 'string', 'array', 'object', 'math', 'random', 'uuid',
+  'log', 'logger', 'debug', 'error', 'config', 'env', 'dotenv', 'cache', 'queue',
+  'aws', 'azure', 'docker', 'kubernetes', 'serverless', 'terraform',
+  'css', 'sass', 'tailwind', 'style', 'component', 'ui', 'form', 'router', 'state',
+  'image', 'video', 'audio', 'pdf', 'csv', 'json', 'yaml', 'xml', 'markdown',
+  'file', 'path', 'glob', 'watch', 'zip', 'compress', 'encoding',
+  'email', 'payment', 'stripe', 'analytics', 'i18n', 'chart', 'map', 'calendar',
+  'mock', 'fixture', 'coverage', 'benchmark', 'monorepo', 'workspace', 'plugin',
+  'llm', 'openai', 'anthropic', 'embedding', 'vector', 'agent', 'mcp', 'prompt',
+];
+
+/** Popular package names, used for typosquat distance and the unknown check. */
 async function collectPopular(limit = 5000) {
   const names = new Set();
-  const terms = 'abcdefghijklmnopqrstuvwxyz'.split('');
+  let terms = 0;
 
-  for (const term of terms) {
-    for (let from = 0; from < 500 && names.size < limit; from += 250) {
-      const url = `https://registry.npmjs.org/-/v1/search?text=${term}&size=250&from=${from}&popularity=1.0&quality=0.0&maintenance=0.0`;
+  for (const term of SEED_TERMS) {
+    if (names.size >= limit) break;
+    terms += 1;
+
+    for (let from = 0; from < 500; from += 250) {
+      const url =
+        `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(term)}` +
+        `&size=250&from=${from}&popularity=1.0&quality=0.0&maintenance=0.0`;
+
+      let json;
       try {
-        const response = await fetch(url);
+        const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
         if (!response.ok) break;
-        const json = await response.json();
-        for (const entry of json.objects ?? []) {
-          const name = entry.package?.name;
-          if (name) names.add(name);
-        }
-        if ((json.objects ?? []).length < 250) break;
+        json = await response.json();
       } catch {
         break;
       }
+
+      const objects = json.objects ?? [];
+      for (const entry of objects) {
+        const name = entry.package?.name;
+        // Skip one off scoped forks. They add noise to the typosquat distance
+        // check without helping anyone.
+        if (name && !/^@[^/]+\/(test|demo|example|tmp)/.test(name)) names.add(name);
+      }
+
+      if (objects.length < 250) break;
     }
-    if (names.size >= limit) break;
   }
 
-  process.stdout.write(`collected ${names.size} popular package names\n`);
+  process.stdout.write(`collected ${names.size} package names from ${terms} search terms\n`);
   return [...names].sort().slice(0, limit);
 }
+
 
 async function main() {
   const osvDir = arg('--osv-dir');

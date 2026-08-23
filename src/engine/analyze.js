@@ -56,11 +56,12 @@ export function analyze(options) {
   if (candidates.length === 0) return { findings: [] };
 
   const isVue = /\.vue$/i.test(String(filePath));
+  const isMarkupFile = isVue || /\.svelte$/i.test(String(filePath));
   const parsed = parseSource(source, filePath);
 
   // A single file component with only a template and no script is normal, and
   // the template rules still have work to do.
-  if (parsed.error && !isVue) return { findings: [], parseError: parsed.error };
+  if (parsed.error && !isMarkupFile) return { findings: [], parseError: parsed.error };
 
   const ast = parsed.ast ?? {
     type: 'Program',
@@ -72,7 +73,17 @@ export function analyze(options) {
   };
   const language = parsed.language ?? 'js';
 
-  const templateRules = isVue ? candidates.filter((rule) => rule.target === 'template') : [];
+  const markupKind = isVue ? 'vue' : /\.svelte$/i.test(String(filePath)) ? 'svelte' : null;
+
+  // Template rules take a scanned element, markup rules take the whole markup
+  // region. Both declare which formats they apply to.
+  const forMarkup = (rule) => (rule.languages ?? []).includes(markupKind);
+  const templateRules = markupKind
+    ? candidates.filter((rule) => rule.target === 'template' && forMarkup(rule))
+    : [];
+  const markupRules = markupKind
+    ? candidates.filter((rule) => rule.target === 'markup' && forMarkup(rule))
+    : [];
 
   // Template rules declare `vue` as their language, but the parsed language of
   // a single file component is the language of its script block, so they are
@@ -82,15 +93,19 @@ export function analyze(options) {
   const active = candidates.filter(
     (rule) =>
       rule.target !== 'template' &&
+      rule.target !== 'markup' &&
       rule.target !== 'manifest' &&
       languageMatches(rule, language),
   );
 
-  if (active.length === 0 && templateRules.length === 0) return { findings: [] };
+  if (active.length === 0 && templateRules.length === 0 && markupRules.length === 0) {
+    return { findings: [] };
+  }
 
   const byNodeType = new Map();
   for (const rule of active) {
     if (rule.target === 'template') continue;
+    if (rule.target === 'markup') continue;
     for (const type of rule.nodeTypes ?? ['CallExpression']) {
       if (!byNodeType.has(type)) byNodeType.set(type, []);
       byNodeType.get(type).push(rule);
@@ -194,7 +209,7 @@ export function analyze(options) {
   // Vue templates are scanned separately. The script block has an AST, the
   // template does not, so these rules work on elements and attributes.
   if (templateRules.length > 0) {
-    const elements = scanTemplate(source);
+    const elements = scanTemplate(source, markupKind);
 
     for (const element of elements) {
       for (const rule of templateRules) {
@@ -240,6 +255,51 @@ export function analyze(options) {
           filePath,
         });
       }
+    }
+  }
+
+
+  // Markup rules look at the whole markup region rather than one element,
+  // because a Svelte {@html ...} is not an attribute on anything.
+  for (const rule of markupRules) {
+    let hits;
+    try {
+      hits = rule.matchMarkup(source, ctx, markupKind) ?? [];
+    } catch {
+      continue;
+    }
+
+    for (const hit of hits) {
+      const offset = hit.offset ?? 0;
+      if (!wholeFile && changed && (offset < changed.start || offset > changed.end)) continue;
+
+      const line = lineOf(source, offset);
+      const key = `${rule.id}:${line}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      if (suppressions.isSuppressed(rule.id, line)) continue;
+
+      const severity = config.severityFor({
+        ...rule,
+        severity: hit.severityHint ?? rule.severity,
+      });
+      if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+
+      findings.push({
+        ruleId: rule.id,
+        title: rule.title,
+        severity,
+        owasp2025: rule.owasp2025,
+        cwe: rule.cwe ?? [],
+        api: rule.api ?? null,
+        line,
+        column: 1,
+        evidence: lineText(source, line),
+        message: typeof rule.message === 'function' ? rule.message(hit) : rule.message,
+        fix: rule.fix,
+        filePath,
+      });
     }
   }
 

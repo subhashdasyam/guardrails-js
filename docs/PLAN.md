@@ -2,7 +2,7 @@
 
 ## Build status
 
-v1.0 is built and tested: the engine, all three hooks, 78 rules across eight packs, four dependency version advisories, the npm install gate, session priming, suppression, the loop guard, the report file, both slash commands, all three skills, the CI binary, and the workflows. See [CHANGELOG.md](../CHANGELOG.md).
+v1.1 is built and tested: the engine, all three hooks, 87 rules across ten packs, four dependency version advisories, the npm install gate, session priming, suppression, the loop guard, the report file, both slash commands, all three skills, the CI binary, and the workflows. See [CHANGELOG.md](../CHANGELOG.md).
 
 The rule inventory further down was written before any code existed. The section below is what actually shipped, and the plan text is left as written so the reasoning stays visible.
 
@@ -32,9 +32,21 @@ This replaced the ad hoc lockfile and denylist notes that the SessionStart hook 
 
 It is deliberately not loaded by the plugin. Claude Code auto discovers `hooks/hooks.json` and `hooks.json` only, so the filename keeps it off, and the manifest does not reference it. Installing it into your own settings is the switch. There is no config flag on purpose: a flag would be a second source of truth that could disagree with whether the hook is actually registered, and the plugin advertises zero model calls, which has to stay true unless you say otherwise.
 
+### Built in 1.1
+
+Four things the "what is next" list called for.
+
+**NestJS and tRPC.** Five rules in `src/rules/backend/nest-trpc.js`. `NEST-GUARD` only fires in a controller that guards its other routes, because a controller where nothing is guarded is far more likely to be covered by a global `APP_GUARD` in another file, and a rule that fires on every controller in such a project is worthless.
+
+**Angular and Svelte.** Four rules in `src/rules/frontend/angular-svelte.js`, plus `.svelte` parsing, so script blocks now get all the existing rules too. Svelte needed a third markup shape: `target: 'markup'` with `matchMarkup`, because `{@html}` is not an attribute on anything and does not fit the element model.
+
+**The Vue parser question, settled with a measurement rather than an opinion.** The condition was "if the bundle cost stops mattering or the scanner starts missing things". Neither is true. `@vue/compiler-dom` is 1248 KB bundled and about 30 ms to load, against 727 KB and 20 ms for the entire plugin, and full `@vue/compiler-sfc` will not bundle at all because it pulls in `consolidate` and 39 optional template engines. The scanner was then held against the real parser on 18 cases chosen to break a hand written scanner, and agreed on all 18. The reference parser is now a dev dependency and `test/vue-parity.test.mjs` keeps that honest, so the decision is re-checked on every run rather than assumed.
+
+**A wider package list.** 336 names to 3292. The refresh script had been silently broken: it paged the npm search API one letter at a time, and single letters return no results, so every run collected nothing and left the file untouched. It now walks the subjects packages are about.
+
 ### What the plan asked for and still is not built
 
-1. **Detection-rate tracking against NodeGoat and Juice Shop.** Planned as a reported metric rather than a merge gate, and still absent. The false-positive corpus is the gate that actually shapes the rules. Nothing yet measures what the ruleset misses.
+1. **Detection-rate tracking against NodeGoat and Juice Shop.** Still absent, and now the only item left from the original list. The corpus gate shapes the rules against false positives; nothing measures false negatives.
 2. **`PP-VUE`.** Dropped. `PP-02` and `PP-03` already cover merging request data into long lived objects, and framing it as a Vue rule added a name without adding detection. `VUE-URL` was built instead, covering bound `:href` and `:src` with no protocol check, which was the real gap.
 
 `PERF-N05` in the pack list below is the same detector as `REDOS-01` and was counted twice in the plan. `RATE-01`, covering login endpoints with no rate limit, was added during v0.2 and never appeared in the plan inventory.
@@ -45,12 +57,12 @@ The plan targeted about 60 enforced rules. What shipped:
 
 | | Count |
 |---|---|
-| Rules in `RULES` | 78 |
+| Rules in `RULES` | 87 |
 | Dependency advisory ids (`NEXT-VER`, `RSC-VER`, `NUXT-VER`, `VITE-VER`) | 4 |
-| Distinct finding ids in total | 82 |
-| Packs | 8 |
+| Distinct finding ids in total | 91 |
+| Packs | 10 |
 
-Rules come in three shapes. Most take an AST node. Vue template rules take a scanned element. Supply chain rules take a project.
+Rules come in four shapes. Most take an AST node. Template rules take a scanned element. Markup rules take the whole markup region, which is what a Svelte `{@html}` needs since it is not an attribute. Supply chain rules take a project.
 
 The latency gate measures differences rather than wall clock, because the absolute varies by machine more than the plugin does. Against a bare node process: 20 ms to load the bundle, 2 ms to scan a clean file, 15 ms to scan one with findings. End to end a write costs about 37 ms on a development machine and about 55 ms on a shared CI runner, most of it Node starting up. The tool reports nothing against its own source, with two documented suppressions where the hook reads back the file it was told about.
 

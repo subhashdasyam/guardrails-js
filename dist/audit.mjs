@@ -14873,11 +14873,13 @@ var SUPPORTED_EXTENSIONS = /* @__PURE__ */ new Set([
   ".tsx",
   ".mts",
   ".cts",
-  ".vue"
+  ".vue",
+  ".svelte"
 ]);
 function languageOf(filePath) {
   const lower = String(filePath).toLowerCase();
   if (lower.endsWith(".vue")) return "vue";
+  if (lower.endsWith(".svelte")) return "svelte";
   if (lower.endsWith(".tsx")) return "tsx";
   if (lower.endsWith(".jsx")) return "jsx";
   if (lower.endsWith(".ts") || lower.endsWith(".mts") || lower.endsWith(".cts")) return "ts";
@@ -14911,7 +14913,7 @@ function pluginsFor(language) {
 function parseSource(source, filePath) {
   let language = languageOf(filePath);
   let code = source;
-  if (language === "vue") {
+  if (language === "vue" || language === "svelte") {
     const extracted = blankOutsideScript(source);
     if (!extracted.found) return { error: "no script block" };
     code = extracted.code;
@@ -15026,8 +15028,27 @@ function parseAttributes(text, base) {
   }
   return attributes;
 }
-function scanTemplate(source) {
-  const block = extractTemplateBlock(source);
+function blankBlocks(source, tags) {
+  const buffer = Array.from(source);
+  for (const tag of tags) {
+    const pattern = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?</${tag}>`, "gi");
+    let match;
+    while ((match = pattern.exec(source)) !== null) {
+      for (let i = match.index; i < match.index + match[0].length; i += 1) {
+        if (buffer[i] !== "\n") buffer[i] = " ";
+      }
+    }
+  }
+  return buffer.join("");
+}
+function markupRegion(source, kind = "vue") {
+  if (kind === "svelte") {
+    return { start: 0, end: source.length, content: blankBlocks(source, ["script", "style"]) };
+  }
+  return extractTemplateBlock(source);
+}
+function scanTemplate(source, kind = "vue") {
+  const block = markupRegion(source, kind);
   if (!block) return [];
   const elements = [];
   const content = block.content;
@@ -15476,6 +15497,48 @@ function majorOf(range) {
   const match = /(\d+)/.exec(String(range));
   return match ? Number(match[1]) : null;
 }
+var SANITIZER_PATTERN = /(DOMPurify|purify|sanitize|xss|clean)\s*[.(]/i;
+function bindingInitializer(name, source) {
+  if (!/^[A-Za-z_$][\w$]*$/.test(String(name))) return null;
+  const pattern = new RegExp(
+    `(?:const|let|var)\\s+${name}\\s*=\\s*([^;\\n]+)|\\$:\\s*${name}\\s*=\\s*([^;\\n]+)`
+  );
+  const match = pattern.exec(source);
+  if (!match) return null;
+  return (match[1] ?? match[2] ?? "").trim() || null;
+}
+function looksSanitized(node, ctx) {
+  if (!node) return false;
+  if (isLiteral(node)) return true;
+  if (isCall(node)) {
+    const name = memberName(node.callee);
+    if (name && SANITIZER_PATTERN.test(name)) return true;
+  }
+  if (node.type === "ConditionalExpression") {
+    return looksSanitized(node.consequent, ctx) && looksSanitized(node.alternate, ctx);
+  }
+  if (node.type === "Identifier") {
+    const initializer = bindingInitializer(node.name, ctx.source);
+    if (initializer && SANITIZER_PATTERN.test(initializer)) return true;
+  }
+  return false;
+}
+function looksConstant(node, ctx) {
+  if (!node) return false;
+  if (isLiteral(node)) return true;
+  if (node.type === "Identifier") {
+    const initializer = bindingInitializer(node.name, ctx.source);
+    if (initializer && /^['"`]/.test(initializer)) return true;
+  }
+  return false;
+}
+function expressionLooksSanitized(expression, source) {
+  const text = String(expression ?? "").trim();
+  if (!text) return false;
+  if (SANITIZER_PATTERN.test(text)) return true;
+  const initializer = bindingInitializer(text, source);
+  return Boolean(initializer && SANITIZER_PATTERN.test(initializer));
+}
 function fileLooksLikeTest(filePath) {
   return /(^|[/\\])(test|tests|__tests__|spec|fixtures?|mocks?|e2e)([/\\]|$)|\.(test|spec)\.[cm]?[jt]sx?$/i.test(
     String(filePath)
@@ -15523,8 +15586,9 @@ function analyze(options) {
   const candidates = prefilter(source, enabled);
   if (candidates.length === 0) return { findings: [] };
   const isVue = /\.vue$/i.test(String(filePath));
+  const isMarkupFile = isVue || /\.svelte$/i.test(String(filePath));
   const parsed = parseSource(source, filePath);
-  if (parsed.error && !isVue) return { findings: [], parseError: parsed.error };
+  if (parsed.error && !isMarkupFile) return { findings: [], parseError: parsed.error };
   const ast = parsed.ast ?? {
     type: "Program",
     body: [],
@@ -15534,14 +15598,20 @@ function analyze(options) {
     end: source.length
   };
   const language = parsed.language ?? "js";
-  const templateRules = isVue ? candidates.filter((rule) => rule.target === "template") : [];
+  const markupKind = isVue ? "vue" : /\.svelte$/i.test(String(filePath)) ? "svelte" : null;
+  const forMarkup = (rule) => (rule.languages ?? []).includes(markupKind);
+  const templateRules = markupKind ? candidates.filter((rule) => rule.target === "template" && forMarkup(rule)) : [];
+  const markupRules = markupKind ? candidates.filter((rule) => rule.target === "markup" && forMarkup(rule)) : [];
   const active = candidates.filter(
-    (rule) => rule.target !== "template" && rule.target !== "manifest" && languageMatches(rule, language)
+    (rule) => rule.target !== "template" && rule.target !== "markup" && rule.target !== "manifest" && languageMatches(rule, language)
   );
-  if (active.length === 0 && templateRules.length === 0) return { findings: [] };
+  if (active.length === 0 && templateRules.length === 0 && markupRules.length === 0) {
+    return { findings: [] };
+  }
   const byNodeType = /* @__PURE__ */ new Map();
   for (const rule of active) {
     if (rule.target === "template") continue;
+    if (rule.target === "markup") continue;
     for (const type of rule.nodeTypes ?? ["CallExpression"]) {
       if (!byNodeType.has(type)) byNodeType.set(type, []);
       byNodeType.get(type).push(rule);
@@ -15621,7 +15691,7 @@ function analyze(options) {
     return void 0;
   });
   if (templateRules.length > 0) {
-    const elements = scanTemplate(source);
+    const elements = scanTemplate(source, markupKind);
     for (const element of elements) {
       for (const rule of templateRules) {
         let hit;
@@ -15658,6 +15728,42 @@ function analyze(options) {
           filePath
         });
       }
+    }
+  }
+  for (const rule of markupRules) {
+    let hits;
+    try {
+      hits = rule.matchMarkup(source, ctx, markupKind) ?? [];
+    } catch {
+      continue;
+    }
+    for (const hit of hits) {
+      const offset = hit.offset ?? 0;
+      if (!wholeFile && changed && (offset < changed.start || offset > changed.end)) continue;
+      const line = lineOf(source, offset);
+      const key = `${rule.id}:${line}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (suppressions.isSuppressed(rule.id, line)) continue;
+      const severity = config.severityFor({
+        ...rule,
+        severity: hit.severityHint ?? rule.severity
+      });
+      if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+      findings.push({
+        ruleId: rule.id,
+        title: rule.title,
+        severity,
+        owasp2025: rule.owasp2025,
+        cwe: rule.cwe ?? [],
+        api: rule.api ?? null,
+        line,
+        column: 1,
+        evidence: lineText(source, line),
+        message: typeof rule.message === "function" ? rule.message(hit) : rule.message,
+        fix: rule.fix,
+        filePath
+      });
     }
   }
   for (const missing of suppressions.missingReason) {
@@ -17591,7 +17697,6 @@ var NEXT_IMG = {
 var next_default = [NEXT_MW, SERVER_ACTION, NEXT_IMG];
 
 // src/rules/vue/vue.js
-var SANITIZER = /(DOMPurify|purify|sanitize|xss|clean)\s*[.(]/i;
 var XSS_03 = {
   id: "XSS-03",
   title: "Unsanitised HTML rendered by Vue",
@@ -17606,7 +17711,7 @@ var XSS_03 = {
       (candidate) => candidate.name === "v-html" || candidate.name === "v-html.prop"
     );
     if (!attribute || !attribute.value) return null;
-    if (SANITIZER.test(attribute.value)) return null;
+    if (expressionLooksSanitized(attribute.value, ctx.source)) return null;
     return {
       offset: attribute.valueStart ?? attribute.nameStart,
       expression: attribute.value.slice(0, 60)
@@ -18330,6 +18435,312 @@ var SUPPLY_PROV = {
 };
 var manifest_default = [SUPPLY_LOCK, SUPPLY_SCRIPTS, SUPPLY_DENY, SUPPLY_PROV];
 
+// src/rules/backend/nest-trpc.js
+function decoratorNames(node) {
+  return (node.decorators ?? []).map((decorator) => {
+    const expression = decorator.expression;
+    if (!expression) return null;
+    if (expression.type === "CallExpression" || expression.type === "OptionalCallExpression") {
+      return lastSegment(memberName(expression.callee));
+    }
+    return lastSegment(memberName(expression));
+  });
+}
+function hasDecorator(node, name) {
+  return decoratorNames(node).includes(name);
+}
+var MUTATING_ROUTES = ["Post", "Put", "Patch", "Delete"];
+var ALL_ROUTES = [...MUTATING_ROUTES, "Get", "All", "Options", "Head"];
+function routeDecorator(node) {
+  return decoratorNames(node).find((name) => ALL_ROUTES.includes(name)) ?? null;
+}
+var NEST_GUARD = {
+  id: "NEST-GUARD",
+  title: "Nest route with no guard, in a controller that guards others",
+  severity: "medium",
+  owasp2025: "A01",
+  cwe: ["CWE-862", "CWE-306"],
+  api: "API5",
+  languages: ["ts", "tsx", "js"],
+  prefilter: /@Controller|UseGuards/,
+  nodeTypes: ["ClassDeclaration", "ClassExpression"],
+  match(node, ctx) {
+    if (!hasDecorator(node, "Controller")) return null;
+    if (/APP_GUARD/.test(ctx.source)) return null;
+    const methods = (node.body?.body ?? []).filter(
+      (member) => member.type === "ClassMethod" && routeDecorator(member)
+    );
+    if (methods.length === 0) return null;
+    const classGuarded = hasDecorator(node, "UseGuards");
+    if (classGuarded) return null;
+    const guarded = methods.filter((method) => hasDecorator(method, "UseGuards"));
+    const unguarded = methods.filter(
+      (method) => !hasDecorator(method, "UseGuards") && MUTATING_ROUTES.includes(routeDecorator(method))
+    );
+    if (guarded.length === 0 || unguarded.length === 0) return null;
+    const first = unguarded[0];
+    return {
+      node: first,
+      method: first.key?.name ?? "a route",
+      verb: routeDecorator(first),
+      guardedCount: guarded.length
+    };
+  },
+  message: (f) => `${f.method} handles @${f.verb} with no @UseGuards, while ${f.guardedCount} other route${f.guardedCount === 1 ? "" : "s"} in this controller has one. A missing decorator is a public endpoint and it looks exactly like a guarded one.`,
+  fix: "@UseGuards(AuthGuard, RolesGuard)\n@Post()\nasync create(@Body() dto: CreateDto) { ... }"
+};
+var SENSITIVE_NAME = /(admin|internal|delete|remove|purge|impersonate|billing|payout|refund|role|permission|password|token|secret|export|import)/i;
+var NEST_PUBLIC = {
+  id: "NEST-PUBLIC",
+  title: "Sensitive Nest route marked public",
+  severity: "high",
+  owasp2025: "A01",
+  cwe: ["CWE-862"],
+  api: "API5",
+  languages: ["ts", "tsx", "js"],
+  prefilter: /@Public|isPublic|SkipAuth|AllowAnonymous/,
+  nodeTypes: ["ClassMethod"],
+  match(node, ctx) {
+    const names = decoratorNames(node);
+    const isPublic = names.some(
+      (name) => ["Public", "SkipAuth", "AllowAnonymous", "NoAuth"].includes(name)
+    );
+    if (!isPublic) return null;
+    const verb = routeDecorator(node);
+    if (!verb) return null;
+    const methodName = node.key?.name ?? "";
+    const path7 = (node.decorators ?? []).map((decorator) => staticString(decorator.expression?.arguments?.[0])).find(Boolean) ?? "";
+    const sensitive = SENSITIVE_NAME.test(methodName) || SENSITIVE_NAME.test(path7);
+    const mutating = MUTATING_ROUTES.includes(verb);
+    if (!sensitive && !mutating) return null;
+    return {
+      node,
+      method: methodName || "this route",
+      verb,
+      severityHint: sensitive ? "high" : "medium"
+    };
+  },
+  message: (f) => `${f.method} is marked public and handles @${f.verb}. Whatever global guard protects the rest of the application skips this one, so it is reachable with no credentials at all.`,
+  fix: "Remove the public decorator, or narrow it so only the specific unauthenticated step is exposed."
+};
+var NEST_WHITELIST = {
+  id: "NEST-WHITELIST",
+  title: "ValidationPipe keeps unknown fields",
+  severity: "medium",
+  owasp2025: "A01",
+  cwe: ["CWE-915"],
+  api: "API3",
+  languages: ["ts", "tsx", "js"],
+  prefilter: /ValidationPipe/,
+  nodeTypes: ["NewExpression", "CallExpression"],
+  match(node) {
+    const name = lastSegment(memberName(node.callee) ?? "");
+    if (name !== "ValidationPipe") return null;
+    const options = node.arguments?.[0];
+    if (options?.type === "ObjectExpression" && isTrue(objectValue(options, "whitelist"))) {
+      return null;
+    }
+    return { node, bare: !options };
+  },
+  message: (f) => `ValidationPipe is set up ${f.bare ? "with no options" : "without whitelist"}, so properties your DTO never declared are validated as absent and then passed through anyway. Posting isAdmin true reaches the service layer.`,
+  fix: "new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true })"
+};
+function chainNames(node) {
+  const names = [];
+  let current = node;
+  while (current) {
+    if (current.type === "CallExpression" || current.type === "OptionalCallExpression") {
+      current = current.callee;
+      continue;
+    }
+    if (current.type === "MemberExpression" || current.type === "OptionalMemberExpression") {
+      const property = current.computed ? null : current.property?.name ?? null;
+      if (property) names.unshift(property);
+      current = current.object;
+      continue;
+    }
+    if (current.type === "Identifier") {
+      names.unshift(current.name);
+    }
+    break;
+  }
+  return names;
+}
+var PUBLIC_BUILDERS = /^(publicProcedure|t\.procedure|procedure|baseProcedure)$/;
+var TRPC_PUBLIC = {
+  id: "TRPC-PUBLIC",
+  title: "tRPC mutation on a public procedure",
+  severity: "medium",
+  owasp2025: "A01",
+  cwe: ["CWE-862"],
+  api: "API5",
+  languages: ["ts", "tsx", "js"],
+  prefilter: /publicProcedure|baseProcedure|t\.procedure/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const chain = chainNames(node);
+    if (chain.length < 2) return null;
+    if (chain[chain.length - 1] !== "mutation") return null;
+    if (!PUBLIC_BUILDERS.test(chain[0])) return null;
+    if (!/protectedProcedure|authedProcedure|privateProcedure|requireAuth/.test(ctx.source)) {
+      return null;
+    }
+    const body = ctx.source.slice(node.start, node.end);
+    if (/ctx\.(session|user|auth)\b/.test(body)) return null;
+    return { node, chain: chain.join(".") };
+  },
+  message: (f) => `${f.chain} changes state and starts from a public builder, so it runs with no session. The only difference from a protected one is the word at the front of the chain.`,
+  fix: "protectedProcedure.input(schema).mutation(({ ctx, input }) => ...)"
+};
+var TRPC_INPUT = {
+  id: "TRPC-INPUT",
+  title: "tRPC resolver reads input with no schema",
+  severity: "high",
+  owasp2025: "A05",
+  cwe: ["CWE-20"],
+  api: "API3",
+  languages: ["ts", "tsx", "js"],
+  prefilter: /\.(query|mutation|subscription)\s*\(/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const chain = chainNames(node);
+    const tail = chain[chain.length - 1];
+    if (!["query", "mutation", "subscription"].includes(tail)) return null;
+    if (!/procedure/i.test(chain[0] ?? "")) return null;
+    if (chain.includes("input") || chain.includes("output")) return null;
+    const resolver = node.arguments?.[0];
+    if (!resolver) return null;
+    if (!["ArrowFunctionExpression", "FunctionExpression"].includes(resolver.type)) return null;
+    const usesInput = (resolver.params ?? []).some((param) => {
+      if (param.type === "Identifier") return param.name === "input";
+      if (param.type !== "ObjectPattern") return false;
+      return param.properties.some((property) => property.key?.name === "input");
+    });
+    if (!usesInput) return null;
+    return { node, chain: chain.join(".") };
+  },
+  message: (f) => `${f.chain} reads input but no .input(schema) runs before it, so whatever the client sends arrives unchecked and untyped at runtime. The TypeScript type is a comment here, not a check.`,
+  fix: "protectedProcedure.input(z.object({ id: z.string().uuid() })).mutation(({ input }) => ...)"
+};
+var nest_trpc_default = [NEST_GUARD, NEST_PUBLIC, NEST_WHITELIST, TRPC_PUBLIC, TRPC_INPUT];
+
+// src/rules/frontend/angular-svelte.js
+var BYPASS_METHODS = [
+  "bypassSecurityTrustHtml",
+  "bypassSecurityTrustScript",
+  "bypassSecurityTrustStyle",
+  "bypassSecurityTrustUrl",
+  "bypassSecurityTrustResourceUrl"
+];
+var NG_BYPASS = {
+  id: "NG-BYPASS",
+  title: "Angular sanitizer bypassed",
+  severity: "high",
+  owasp2025: "A05",
+  cwe: ["CWE-79"],
+  languages: ["ts", "tsx", "js", "jsx"],
+  prefilter: /bypassSecurityTrust/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    const method = lastSegment(full);
+    if (!BYPASS_METHODS.includes(method)) return null;
+    const value = node.arguments?.[0];
+    if (looksConstant(value, ctx)) return null;
+    if (looksSanitized(value, ctx)) return null;
+    const kind = method.replace("bypassSecurityTrust", "").toLowerCase();
+    return {
+      node: value ?? node,
+      method,
+      kind,
+      severityHint: value && ctx.isTainted(value) ? "critical" : "high"
+    };
+  },
+  message: (f) => `${f.method} tells Angular to stop checking this ${f.kind} value. Angular's sanitizer is the reason Angular templates are safe by default, and this is the switch that turns it off.`,
+  fix: "Render the value normally and let Angular sanitize it. If you truly need markup, sanitize with DOMPurify first and keep the bypass next to a reviewed constant."
+};
+var NG_INNERHTML = {
+  id: "NG-INNERHTML",
+  title: "Angular innerHTML binding in an inline template",
+  severity: "medium",
+  owasp2025: "A05",
+  cwe: ["CWE-79"],
+  languages: ["ts", "tsx", "js"],
+  prefilter: /\[innerHTML\]/,
+  nodeTypes: ["ObjectProperty", "Property"],
+  match(node, ctx) {
+    const key = node.key?.name ?? node.key?.value;
+    if (key !== "template") return null;
+    const template = staticString(node.value);
+    if (!template) return null;
+    const binding = /\[innerHTML\]\s*=\s*"([^"]*)"/.exec(template);
+    if (!binding) return null;
+    if (expressionLooksSanitized(binding[1], ctx.source)) return null;
+    return { node, expression: binding[1].slice(0, 60) };
+  },
+  message: (f) => `[innerHTML] renders ${f.expression} as markup. Angular sanitizes it, which stops script tags, but sanitizing is not the same as escaping and it is the wrong tool when you only wanted text.`,
+  fix: "<div>{{ comment }}</div>"
+};
+var SVELTE_HTML_TAG = /\{@html\s+([\s\S]*?)\}/g;
+var SVELTE_HTML = {
+  id: "SVELTE-HTML",
+  title: "Unsanitised HTML rendered by Svelte",
+  severity: "high",
+  owasp2025: "A05",
+  cwe: ["CWE-79"],
+  languages: ["svelte"],
+  target: "markup",
+  prefilter: /\{@html/,
+  matchMarkup(source, ctx, kind) {
+    const hits = [];
+    const pattern = new RegExp(SVELTE_HTML_TAG.source, "g");
+    let match;
+    while ((match = pattern.exec(source)) !== null) {
+      const expression = match[1].trim();
+      if (!expression) continue;
+      if (expressionLooksSanitized(expression, source)) continue;
+      if (/^['"`]/.test(expression)) continue;
+      hits.push({ offset: match.index, expression: expression.slice(0, 60) });
+    }
+    return hits;
+  },
+  message: (f) => `{@html ${f.expression}} renders raw markup. Svelte escapes everything else for you, and this is the one place it does not.`,
+  fix: "{comment}  <!-- or {@html DOMPurify.sanitize(comment)} when markup is genuinely needed -->"
+};
+var URL_ATTRIBUTES3 = /* @__PURE__ */ new Set(["href", "src", "action", "formaction", "poster"]);
+var URL_GUARD3 = /startsWith\(\s*['"]https?:|new URL\(|\^https\?:|isSafeUrl|sanitizeUrl/;
+var SVELTE_URL = {
+  id: "SVELTE-URL",
+  title: "Svelte link target with no protocol check",
+  severity: "medium",
+  owasp2025: "A05",
+  cwe: ["CWE-79", "CWE-601"],
+  languages: ["svelte"],
+  target: "template",
+  prefilter: /href=\{|src=\{|action=\{/,
+  matchTemplate(element, ctx) {
+    for (const attribute of element.attributes) {
+      const name = attribute.name.toLowerCase();
+      if (!URL_ATTRIBUTES3.has(name)) continue;
+      if (!attribute.value) continue;
+      if (!attribute.value.startsWith("{")) continue;
+      const expression = attribute.value.slice(1, -1).trim();
+      if (!/url|href|link|redirect|website|homepage|site/i.test(expression)) continue;
+      if (URL_GUARD3.test(ctx.source)) continue;
+      return {
+        offset: attribute.valueStart ?? attribute.nameStart,
+        attribute: name,
+        expression: expression.slice(0, 60)
+      };
+    }
+    return null;
+  },
+  message: (f) => `${f.attribute} is bound to ${f.expression} with no protocol check. A value beginning with javascript: runs as script when someone clicks it.`,
+  fix: "const safe = /^https?:\\/\\//.test(item.url) ? item.url : '#';"
+};
+var angular_svelte_default = [NG_BYPASS, NG_INNERHTML, SVELTE_HTML, SVELTE_URL];
+
 // src/rules/index.js
 var PACKS = {
   "node-core": [...injection_default, ...ssrf_default, ...deserialization_default, ...secrets_config_default, ...prototype_pollution_default],
@@ -18339,7 +18750,9 @@ var PACKS = {
   vue: [...vue_default],
   "perf-node": [...perf_default],
   "perf-frontend": [...perf_default2],
-  supply: [...manifest_default]
+  supply: [...manifest_default],
+  backend: [...nest_trpc_default],
+  frontend: [...angular_svelte_default]
 };
 var RULES = Object.values(PACKS).flat();
 var RULES_BY_ID = new Map(RULES.map((rule) => [rule.id, rule]));
