@@ -1,10 +1,6 @@
 // Built by scripts/build.mjs. Do not edit. Source lives in src/.
 
 
-// src/hooks/session-start.js
-import fs5 from "node:fs";
-import path5 from "node:path";
-
 // src/hooks/util.js
 import fs from "node:fs";
 import path from "node:path";
@@ -687,24 +683,252 @@ function hasLockfile(projectRoot) {
   );
 }
 
-// src/hooks/session-start.js
-function lockedVersions(projectRoot) {
+// src/supply-chain/dependencies.js
+import fs5 from "node:fs";
+import path5 from "node:path";
+
+// src/supply-chain/data/framework-advisories.json
+var framework_advisories_default = {
+  note: "Version ranges for framework issues a source scanner cannot see. An exposed dev server, a middleware bypass, or a vulnerable server component package is a property of the version you installed, not of your code. Thresholds come from the vendor advisories and are refreshed by .github/workflows/threat-data.yml. Live OSV lookups and npm audit remain authoritative.",
+  updated: "2026-08-23",
+  advisories: [
+    {
+      package: "next",
+      id: "CVE-2025-29927",
+      severity: "critical",
+      title: "Middleware authorization bypass",
+      summary: "A request carrying the x-middleware-subrequest header skipped middleware entirely. Anything protected only by middleware was open.",
+      action: "Upgrade. Until you can, strip x-middleware-subrequest at the edge and repeat the auth check inside the route handler.",
+      affectsOlderMajors: true,
+      fixes: [
+        { major: 15, fixed: "15.2.3" },
+        { major: 14, fixed: "14.2.25" },
+        { major: 13, fixed: "13.5.9" },
+        { major: 12, fixed: "12.3.5" }
+      ]
+    },
+    {
+      package: "next",
+      id: "CVE-2026-64644",
+      severity: "medium",
+      title: "Image optimizer resource exhaustion",
+      summary: "A self hosted instance processing a remote image can be made to burn CPU on a crafted file.",
+      action: "Upgrade, and narrow images.remotePatterns to the hosts you actually use.",
+      fixes: [
+        { major: 16, fixed: "16.2.11" },
+        { major: 15, fixed: "15.5.21" }
+      ]
+    },
+    {
+      package: "react-server-dom-webpack",
+      id: "CVE-2025-55182",
+      severity: "critical",
+      title: "Unauthenticated remote code execution in React Server Components",
+      summary: "Server function requests were deserialized unsafely, which gave remote code execution with no authentication.",
+      action: "Upgrade immediately. This one does not need a server action of your own to be reachable.",
+      fixes: [
+        { major: 19, minor: 2, fixed: "19.2.1" },
+        { major: 19, minor: 1, fixed: "19.1.2" },
+        { major: 19, minor: 0, fixed: "19.0.1" }
+      ]
+    },
+    {
+      package: "react-server-dom-turbopack",
+      id: "CVE-2025-55182",
+      severity: "critical",
+      title: "Unauthenticated remote code execution in React Server Components",
+      summary: "Server function requests were deserialized unsafely, which gave remote code execution with no authentication.",
+      action: "Upgrade immediately.",
+      fixes: [
+        { major: 19, minor: 2, fixed: "19.2.1" },
+        { major: 19, minor: 1, fixed: "19.1.2" },
+        { major: 19, minor: 0, fixed: "19.0.1" }
+      ]
+    },
+    {
+      package: "react-server-dom-parcel",
+      id: "CVE-2025-55182",
+      severity: "critical",
+      title: "Unauthenticated remote code execution in React Server Components",
+      summary: "Server function requests were deserialized unsafely, which gave remote code execution with no authentication.",
+      action: "Upgrade immediately.",
+      fixes: [
+        { major: 19, minor: 2, fixed: "19.2.1" },
+        { major: 19, minor: 1, fixed: "19.1.2" },
+        { major: 19, minor: 0, fixed: "19.0.1" }
+      ]
+    },
+    {
+      package: "nuxt",
+      id: "CVE-2025-24360",
+      severity: "medium",
+      title: "Development server source disclosure through permissive CORS",
+      summary: "A dev server reachable from the network could hand its source to any origin.",
+      action: "Upgrade, and never bind a dev server to a network interface.",
+      fixes: [{ major: 3, fixed: "3.15.3" }]
+    },
+    {
+      package: "nuxt",
+      id: "GHSA-nuxt-2026-server-islands",
+      severity: "high",
+      title: "Server island and route rule issues fixed in 2026",
+      summary: "Fixes covered server island instantiation, a route rule authorization bypass, a server component denial of service, and cached payloads leaking across users.",
+      action: "Upgrade. Do not treat route rules as an authorization boundary.",
+      fixes: [
+        { major: 4, fixed: "4.5.1" },
+        { major: 3, fixed: "3.21.10" }
+      ]
+    },
+    {
+      package: "vite",
+      id: "CVE-2025-30208 and CVE-2025-31125",
+      severity: "high",
+      title: "Development server served files outside the allowed roots",
+      summary: "Crafted requests using the @fs prefix and query tricks read arbitrary files from the machine running the dev server.",
+      action: "Upgrade, and keep the dev server on localhost. It is not built to face a network.",
+      fixes: [
+        { major: 6, minor: 2, fixed: "6.2.4" },
+        { major: 6, minor: 1, fixed: "6.1.3" },
+        { major: 6, minor: 0, fixed: "6.0.13" },
+        { major: 5, fixed: "5.4.16" },
+        { major: 4, fixed: "4.5.11" }
+      ]
+    }
+  ]
+};
+
+// src/supply-chain/dependencies.js
+function readLockedVersions(projectRoot) {
   const found = /* @__PURE__ */ new Map();
-  try {
-    const lock = JSON.parse(
-      fs5.readFileSync(path5.join(projectRoot, "package-lock.json"), "utf8")
-    );
+  for (const file of ["package-lock.json", "npm-shrinkwrap.json"]) {
+    let lock;
+    try {
+      lock = JSON.parse(fs5.readFileSync(path5.join(projectRoot, file), "utf8"));
+    } catch {
+      continue;
+    }
     for (const [key, value] of Object.entries(lock.packages ?? {})) {
       const name = key.replace(/^node_modules\//, "").replace(/.*\/node_modules\//, "");
-      if (name && value?.version) found.set(name, value.version);
+      if (name && value?.version && !found.has(name)) found.set(name, value.version);
     }
     for (const [name, value] of Object.entries(lock.dependencies ?? {})) {
       if (value?.version && !found.has(name)) found.set(name, value.version);
     }
-  } catch {
   }
   return found;
 }
+function parseVersion(value) {
+  if (!value) return null;
+  const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(value));
+  if (match) return [Number(match[1]), Number(match[2]), Number(match[3])];
+  const short = /(\d+)\.(\d+)/.exec(String(value));
+  if (short) return [Number(short[1]), Number(short[2]), 0];
+  const major = /(\d+)/.exec(String(value));
+  if (major) return [Number(major[1]), 0, 0];
+  return null;
+}
+function compareVersions(a, b) {
+  const left = Array.isArray(a) ? a : parseVersion(a);
+  const right = Array.isArray(b) ? b : parseVersion(b);
+  if (!left || !right) return 0;
+  for (let i = 0; i < 3; i += 1) {
+    if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
+  }
+  return 0;
+}
+function rangeMinimum(range) {
+  if (!range) return null;
+  const text = String(range).trim();
+  if (text === "*" || text === "latest" || text === "") return null;
+  if (/^(file|link|workspace|git|github|https?):/i.test(text)) return null;
+  return parseVersion(text);
+}
+function fixFor(advisory, version) {
+  const [major, minor] = version;
+  const exact = advisory.fixes.find((fix) => fix.major === major && fix.minor === minor);
+  if (exact) return exact;
+  const byMajor = advisory.fixes.find((fix) => fix.major === major && fix.minor === void 0);
+  if (byMajor) return byMajor;
+  const majors = advisory.fixes.map((fix) => fix.major);
+  if (major < Math.min(...majors)) {
+    return advisory.affectsOlderMajors ? { major, fixed: null, tooOld: true } : null;
+  }
+  const sameMajor = advisory.fixes.filter((fix) => fix.major === major);
+  if (sameMajor.length > 0) {
+    const highest = sameMajor.reduce(
+      (best, fix) => compareVersions(fix.fixed, best.fixed) > 0 ? fix : best
+    );
+    if (minor < (highest.minor ?? 0)) return highest;
+  }
+  return null;
+}
+function checkPackage(name, version, advisories = framework_advisories_default.advisories) {
+  const parsed = Array.isArray(version) ? version : parseVersion(version);
+  if (!parsed) return [];
+  const matches = [];
+  for (const advisory of advisories) {
+    if (advisory.package !== name) continue;
+    const fix = fixFor(advisory, parsed);
+    if (!fix) continue;
+    if (fix.tooOld) {
+      matches.push({ ...advisory, installed: parsed.join("."), fixed: null });
+      continue;
+    }
+    if (compareVersions(parsed, fix.fixed) < 0) {
+      matches.push({ ...advisory, installed: parsed.join("."), fixed: fix.fixed });
+    }
+  }
+  return matches;
+}
+function checkDependencies(pkg, locked = /* @__PURE__ */ new Map()) {
+  if (!pkg) return [];
+  const declared = {
+    ...pkg.dependencies ?? {},
+    ...pkg.devDependencies ?? {},
+    ...pkg.optionalDependencies ?? {}
+  };
+  const seen = /* @__PURE__ */ new Set();
+  const findings = [];
+  const consider = (name, version, exact) => {
+    const key = `${name}@${version}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    for (const match of checkPackage(name, version)) {
+      findings.push({
+        ruleId: match.package === "next" ? "NEXT-VER" : match.package.startsWith("react-server-dom") ? "RSC-VER" : match.package === "nuxt" ? "NUXT-VER" : "VITE-VER",
+        package: name,
+        advisory: match.id,
+        severity: exact ? match.severity : downgrade(match.severity),
+        title: match.title,
+        summary: match.summary,
+        action: match.action,
+        installed: match.installed,
+        fixed: match.fixed,
+        exact
+      });
+    }
+  };
+  for (const [name, version] of locked) consider(name, version, true);
+  for (const [name, range] of Object.entries(declared)) {
+    if (locked.has(name)) continue;
+    const min = rangeMinimum(range);
+    if (!min) continue;
+    consider(name, min, false);
+  }
+  return findings;
+}
+function downgrade(severity) {
+  if (severity === "critical") return "high";
+  if (severity === "high") return "medium";
+  return "low";
+}
+function describeDependencyFinding(finding) {
+  const version = finding.exact ? `${finding.package}@${finding.installed}` : `${finding.package} (range allows ${finding.installed})`;
+  const fix = finding.fixed ? `Upgrade to ${finding.fixed} or later.` : "This major version line has no fix. Move to a supported one.";
+  return `${finding.ruleId} ${version}: ${finding.title} (${finding.advisory}). ${finding.summary} ${fix} ${finding.action}`;
+}
+
+// src/hooks/session-start.js
 function baselineNotes(projectRoot, pkg) {
   const notes = [];
   if (pkg && !hasLockfile(projectRoot)) {
@@ -712,7 +936,10 @@ function baselineNotes(projectRoot, pkg) {
       "This project has no lockfile. Run npm install once and commit package-lock.json, then use npm ci everywhere else."
     );
   }
-  const locked = lockedVersions(projectRoot);
+  const locked = readLockedVersions(projectRoot);
+  for (const finding of checkDependencies(pkg, locked)) {
+    notes.push(describeDependencyFinding(finding));
+  }
   for (const [name, version] of locked) {
     const entry = denylist_default.packages[name];
     if (entry && entry.versions.includes(version)) {

@@ -12,29 +12,12 @@ import { readHookInput, readPackageJson, allDependencies } from './util.js';
 import { loadConfig } from '../engine/config.js';
 import { packsFor, stackLabel } from '../priming/packs.js';
 import { resetSession } from '../engine/fingerprint.js';
-import { denylist } from '../supply-chain/signals.js';
-import { hasLockfile } from '../supply-chain/signals.js';
-
-function lockedVersions(projectRoot) {
-  const found = new Map();
-
-  try {
-    const lock = JSON.parse(
-      fs.readFileSync(path.join(projectRoot, 'package-lock.json'), 'utf8'),
-    );
-    for (const [key, value] of Object.entries(lock.packages ?? {})) {
-      const name = key.replace(/^node_modules\//, '').replace(/.*\/node_modules\//, '');
-      if (name && value?.version) found.set(name, value.version);
-    }
-    for (const [name, value] of Object.entries(lock.dependencies ?? {})) {
-      if (value?.version && !found.has(name)) found.set(name, value.version);
-    }
-  } catch {
-    // no lockfile, or not readable
-  }
-
-  return found;
-}
+import { denylist, hasLockfile } from '../supply-chain/signals.js';
+import {
+  readLockedVersions,
+  checkDependencies,
+  describeDependencyFinding,
+} from '../supply-chain/dependencies.js';
 
 function baselineNotes(projectRoot, pkg) {
   const notes = [];
@@ -45,7 +28,12 @@ function baselineNotes(projectRoot, pkg) {
     );
   }
 
-  const locked = lockedVersions(projectRoot);
+  const locked = readLockedVersions(projectRoot);
+
+  for (const finding of checkDependencies(pkg, locked)) {
+    notes.push(describeDependencyFinding(finding));
+  }
+
   for (const [name, version] of locked) {
     const entry = denylist.packages[name];
     if (entry && entry.versions.includes(version)) {

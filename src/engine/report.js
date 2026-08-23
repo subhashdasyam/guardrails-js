@@ -44,9 +44,10 @@ function formatOne(finding, index) {
  * Claude Code hands a message back to Claude without stopping the turn.
  */
 export function formatLoud(findings, relativePath) {
-  const header = `guardrails-js found ${findings.length} issue${
-    findings.length === 1 ? '' : 's'
-  } in ${relativePath} that need fixing before you move on:`;
+  const one = findings.length === 1;
+  const header = `guardrails-js found ${findings.length} issue${one ? '' : 's'} in ${relativePath} that ${
+    one ? 'needs' : 'need'
+  } fixing before you move on:`;
 
   const body = findings.map((finding, i) => formatOne(finding, i + 1)).join('\n\n');
 

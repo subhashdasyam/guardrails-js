@@ -8,15 +8,16 @@ import nodeCore from './cases/node-core.js';
 import nodeAuth from './cases/node-auth.js';
 import nodeDos from './cases/node-dos.js';
 import prototypePollution from './cases/prototype-pollution.js';
+import react from './cases/react.js';
 
-const cases = [...nodeCore, ...nodeAuth, ...nodeDos, ...prototypePollution];
+const cases = [...nodeCore, ...nodeAuth, ...nodeDos, ...prototypePollution, ...react];
 
 const config = loadConfig('/nonexistent-so-defaults-apply');
 
-function run(code, pkg = null) {
+function run(code, pkg = null, file = 'src/app.js') {
   const { findings, parseError } = analyze({
     source: code,
-    filePath: 'src/app.js',
+    filePath: file,
     config,
     pkg,
     rules: RULES,
@@ -42,8 +43,10 @@ test('every case has at least two safe lookalikes', () => {
 });
 
 for (const entry of cases) {
+  const file = entry.file ?? 'src/app.js';
+
   test(`${entry.rule} fires on the vulnerable case`, () => {
-    const fired = run(entry.fire, entry.pkg ?? null);
+    const fired = run(entry.fire, entry.pkg ?? null, file);
     assert.ok(
       fired.includes(entry.rule),
       `expected ${entry.rule}, got ${fired.join(', ') || 'nothing'}`,
@@ -52,7 +55,9 @@ for (const entry of cases) {
 
   entry.safe.forEach((code, index) => {
     test(`${entry.rule} stays quiet on safe case ${index + 1}`, () => {
-      const fired = run(code, entry.pkg ?? null);
+      // A rule can key off the filename, so a safe case may need a different one.
+      const safeFile = entry.safeFiles?.[index] ?? file;
+      const fired = run(code, entry.pkg ?? null, safeFile);
       assert.ok(
         !fired.includes(entry.rule),
         `${entry.rule} fired on safe code:\n${code}`,
@@ -65,7 +70,7 @@ test('rule metadata is complete', () => {
   const severities = new Set(['critical', 'high', 'medium', 'low', 'perf']);
 
   for (const rule of RULES) {
-    assert.match(rule.id, /^[A-Z]+-\d+$/, `${rule.id} does not look like a rule id`);
+    assert.match(rule.id, /^[A-Z][A-Z0-9]*-[A-Z0-9]+$/, `${rule.id} does not look like a rule id`);
     assert.ok(rule.title, `${rule.id} has no title`);
     assert.ok(severities.has(rule.severity), `${rule.id} has severity ${rule.severity}`);
     assert.ok(rule.owasp2025, `${rule.id} has no OWASP category`);

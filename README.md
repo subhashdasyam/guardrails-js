@@ -2,7 +2,7 @@
 
 A Claude Code plugin that tells Claude when the JavaScript it just wrote is unsafe or slow, so Claude fixes it in the same turn.
 
-**v0.2 works today**: 43 rules for Node, Express, Fastify, and NestJS, the npm install gate, session priming, and the repo audit command. React, Vue, and the performance pack are next. The full design is in [docs/PLAN.md](docs/PLAN.md).
+**v0.3 works today**: 52 rules covering Node, Express, Fastify, NestJS, React, and Next.js, plus dependency version checks, the npm install gate, session priming, and the repo audit command. Vue and the performance pack are next. The full design is in [docs/PLAN.md](docs/PLAN.md).
 
 ## The problem
 
@@ -73,7 +73,7 @@ They use different hooks and do not fight each other. Run both.
 
 ## What it checks today
 
-43 rules, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
+52 rules, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
 
 Injection and interpreters, A05:
 
@@ -122,6 +122,29 @@ Configuration and resource limits, A02 and A10:
 | RATE-01 | Login and password reset endpoints with no rate limit |
 | DESER-01 to DESER-04 | `node-serialize`, `vm` and `vm2`, computed `require`, unsafe YAML |
 
+React and Next.js:
+
+| Rule | What it catches |
+|---|---|
+| XSS-01, XSS-02 | `dangerouslySetInnerHTML` and `innerHTML` with no sanitiser |
+| XSS-05 | `eval`, `new Function`, `setTimeout` with a string |
+| XSS-06, LINK-01 | Link targets with no protocol check, `target="_blank"` with no `rel` |
+| MSG-01 | `postMessage` handlers that never check `event.origin` |
+| NEXT-MW | Middleware used as the only auth check, and code trusting `x-middleware-subrequest` |
+| SERVER-ACTION | A `'use server'` function with no auth check, which is a public endpoint |
+| NEXT-IMG | Image optimizer configured to fetch from any host |
+
+Dependency versions, A03. Some problems are not in your code at all, so these read the lockfile:
+
+| Rule | What it catches |
+|---|---|
+| NEXT-VER | Next.js middleware bypass (CVE-2025-29927) and image optimizer exhaustion |
+| RSC-VER | React Server Components unauthenticated RCE (CVE-2025-55182) |
+| NUXT-VER | Nuxt dev server disclosure and the 2026 server island fixes |
+| VITE-VER | Vite dev server arbitrary file read (CVE-2025-30208, CVE-2025-31125) |
+
+Version checks read the lockfile when there is one, because that is the version you actually installed. With no lockfile they fall back to the lowest version the range allows and drop a severity level, since a range such as `^15.1.0` may already resolve to something patched.
+
 Rules that need to reason across functions to be sure, such as IDOR-01, AUTHZ-01, and CSRF-01, ship at medium severity and stay on the quiet channel. They are prompts to look, not accusations.
 
 For the record: there is no OWASP Top 10 2026. The 2025 list came out in November 2025 and is the current one. An LLM Top 10 2026 exists, but that is a separate project.
@@ -164,7 +187,7 @@ Nothing else ever leaves your machine. File contents are never sent anywhere.
 
 ```bash
 npm ci --ignore-scripts
-npm test              # 187 rule and engine tests
+npm test              # 223 rule, engine, and dependency tests
 npm run build         # rebuild dist/, which is committed
 npm run check:dist    # fail if the committed bundle is stale
 npm run bench         # latency budget
@@ -179,7 +202,6 @@ Measured on this machine: 34 ms for a clean file, 48 ms when a rule fires. Most 
 
 | Version | What lands |
 |---|---|
-| v0.3 | React and Next.js, including the middleware and server action rules |
 | v0.4 | Vue and Nuxt, with real template parsing |
 | v0.5 | Performance rules |
 | v1.0 | Published to the marketplace |

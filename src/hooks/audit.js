@@ -9,6 +9,11 @@ import { loadConfig, isExcluded, meetsMinSeverity, SEVERITY_ORDER } from '../eng
 import { analyze } from '../engine/analyze.js';
 import { SUPPORTED_EXTENSIONS } from '../engine/parse.js';
 import { RULES } from '../rules/index.js';
+import {
+  readLockedVersions,
+  checkDependencies,
+  describeDependencyFinding,
+} from '../supply-chain/dependencies.js';
 import { readPackageJson, relativeTo } from './util.js';
 
 const SKIP_DIRS = new Set([
@@ -105,6 +110,27 @@ export function main(argv = process.argv.slice(2)) {
       wholeFile: true,
     });
     all.push(...findings);
+  }
+
+  // Dependency ranges are not visible in source, so check them separately.
+  if (pkg) {
+    const locked = readLockedVersions(projectRoot);
+    for (const match of checkDependencies(pkg, locked)) {
+      all.push({
+        ruleId: match.ruleId,
+        title: match.title,
+        severity: match.severity,
+        owasp2025: 'A03',
+        cwe: [],
+        api: null,
+        line: 1,
+        column: 1,
+        evidence: `${match.package}@${match.installed}`,
+        message: describeDependencyFinding(match),
+        fix: match.fixed ? `npm install ${match.package}@^${match.fixed}` : match.action,
+        filePath: 'package.json',
+      });
+    }
   }
 
   const counts = {};

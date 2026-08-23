@@ -13,9 +13,58 @@ import { loadConfig, isExcluded } from '../engine/config.js';
 import { analyze } from '../engine/analyze.js';
 import { applyLoopGuard } from '../engine/fingerprint.js';
 import { splitBySeverity, formatLoud, formatQuiet, appendReport } from '../engine/report.js';
+import {
+  readLockedVersions,
+  checkDependencies,
+  describeDependencyFinding,
+} from '../supply-chain/dependencies.js';
 import { RULES } from '../rules/index.js';
 
 const WATCHED_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+
+function checkManifest(filePath, input) {
+  const projectRoot = path.dirname(filePath);
+
+  let pkg;
+  try {
+    pkg = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return;
+  }
+
+  const locked = readLockedVersions(projectRoot);
+  const matches = checkDependencies(pkg, locked);
+  if (matches.length === 0) return;
+
+  const findings = matches.map((match) => ({
+    ruleId: match.ruleId,
+    title: match.title,
+    severity: match.severity,
+    owasp2025: match.severity === 'critical' || match.severity === 'high' ? 'A03' : 'A03',
+    cwe: [],
+    api: null,
+    line: 1,
+    column: 1,
+    evidence: `${match.package}@${match.installed}`,
+    message: describeDependencyFinding(match),
+    fix: match.fixed ? `npm install ${match.package}@^${match.fixed}` : match.action,
+    filePath: 'package.json',
+  }));
+
+  applyLoopGuard(findings, input.session_id, 'package.json');
+  appendReport(projectRoot, 'package.json', findings);
+
+  const { loud, quiet } = splitBySeverity(findings);
+
+  if (loud.length > 0) {
+    let text = formatLoud(loud, 'package.json');
+    if (quiet.length > 0) text += `\n\n${formatQuiet(quiet, 'package.json')}`;
+    emitLoud(text);
+    return;
+  }
+
+  emitAdditionalContext('PostToolUse', formatQuiet(quiet, 'package.json'));
+}
 
 function filePathFrom(toolInput) {
   return (
@@ -35,6 +84,13 @@ export function main() {
 
   const filePath = filePathFrom(input.tool_input);
   if (!filePath) return;
+
+  // package.json is not code, but a version range is where the middleware
+  // bypass and the server component RCE live, so it gets its own path.
+  if (path.basename(filePath) === 'package.json') {
+    checkManifest(filePath, input);
+    return;
+  }
 
   // Self filter on extension. The `if` field in hooks.json can do this too, but
   // it depends on the CLI version, so we never rely on it.

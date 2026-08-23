@@ -14615,8 +14615,8 @@ var require_lib = __commonJS({
 });
 
 // src/hooks/audit.js
-import fs3 from "node:fs";
-import path3 from "node:path";
+import fs4 from "node:fs";
+import path5 from "node:path";
 
 // src/engine/config.js
 import fs from "node:fs";
@@ -17091,24 +17091,572 @@ var RATE_01 = {
 };
 var limits_default = [REDOS_01, BODY_01, UPLOAD_01, ZIP_01, RATE_01];
 
+// src/rules/react/xss.js
+var SANITIZER_CALL = /(DOMPurify|purify|sanitize|xss|clean)/i;
+function isSanitized(node, ctx) {
+  if (!node) return false;
+  if (isLiteral(node)) return true;
+  if (node.type === "CallExpression" || node.type === "OptionalCallExpression") {
+    const name = memberName(node.callee);
+    if (name && SANITIZER_CALL.test(name)) return true;
+  }
+  if (node.type === "ConditionalExpression") {
+    return isSanitized(node.consequent, ctx) && isSanitized(node.alternate, ctx);
+  }
+  if (node.type === "Identifier") {
+    const assignment = new RegExp(
+      `(const|let|var)\\s+${node.name}\\s*=\\s*[^;\\n]*(${SANITIZER_CALL.source})`,
+      "i"
+    );
+    if (assignment.test(ctx.source)) return true;
+  }
+  return false;
+}
+var XSS_01 = {
+  id: "XSS-01",
+  title: "Unsanitised HTML rendered by React",
+  severity: "high",
+  owasp2025: "A05",
+  cwe: ["CWE-79"],
+  languages: ["jsx", "tsx", "js", "ts"],
+  prefilter: /dangerouslySetInnerHTML/,
+  nodeTypes: ["JSXAttribute"],
+  match(node, ctx) {
+    if (node.name?.name !== "dangerouslySetInnerHTML") return null;
+    const value = node.value;
+    if (value?.type !== "JSXExpressionContainer") return null;
+    const object = value.expression;
+    if (object?.type !== "ObjectExpression") return { node, html: "a computed value" };
+    const html = objectValue(object, "__html");
+    if (isSanitized(html, ctx)) return null;
+    return { node: html ?? node, html: html ? ctx.source.slice(html.start, html.end) : "a value" };
+  },
+  message: (f) => `dangerouslySetInnerHTML renders ${f.html} as raw HTML with no sanitiser in front of it. A comment containing an onerror attribute runs as script.`,
+  fix: "<div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }} />"
+};
+var HTML_SINK_PROPERTIES = ["innerHTML", "outerHTML"];
+var XSS_02 = {
+  id: "XSS-02",
+  title: "HTML written straight into the DOM",
+  severity: "high",
+  owasp2025: "A05",
+  cwe: ["CWE-79"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /innerHTML|outerHTML|document\.write|insertAdjacentHTML/,
+  nodeTypes: ["AssignmentExpression", "CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    if (node.type === "AssignmentExpression") {
+      const target = memberName(node.left);
+      if (!target) return null;
+      if (!HTML_SINK_PROPERTIES.includes(lastSegment(target))) return null;
+      if (isSanitized(node.right, ctx)) return null;
+      return { node: node.right, sink: lastSegment(target) };
+    }
+    const full = memberName(node.callee);
+    if (!full) return null;
+    const method = lastSegment(full);
+    if (method === "write" || method === "writeln") {
+      if (!/^document\./.test(full)) return null;
+      const arg = node.arguments[0];
+      if (isSanitized(arg, ctx)) return null;
+      return { node: arg ?? node, sink: "document.write" };
+    }
+    if (method === "insertAdjacentHTML") {
+      const arg = node.arguments[1];
+      if (isSanitized(arg, ctx)) return null;
+      return { node: arg ?? node, sink: "insertAdjacentHTML" };
+    }
+    return null;
+  },
+  message: (f) => `${f.sink} parses whatever it is given as HTML. Use textContent when you want text, and sanitise when you really do need markup.`,
+  fix: "element.textContent = value;  // or DOMPurify.sanitize(value) when HTML is required"
+};
+var XSS_05 = {
+  id: "XSS-05",
+  title: "Code built from a string at runtime",
+  severity: "high",
+  owasp2025: "A05",
+  cwe: ["CWE-94", "CWE-95"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /\beval\s*\(|new\s+Function|setTimeout\s*\(\s*['"`]|setInterval\s*\(\s*['"`]/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression", "NewExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    const name = lastSegment(full);
+    if (node.type === "NewExpression") {
+      if (name !== "Function") return null;
+      return { node, sink: "new Function", severityHint: "high" };
+    }
+    if (name === "eval") {
+      const arg = node.arguments[0];
+      if (isLiteral(arg)) return null;
+      return {
+        node: arg ?? node,
+        sink: "eval",
+        severityHint: arg && ctx.isTainted(arg) ? "critical" : "high"
+      };
+    }
+    if (name === "setTimeout" || name === "setInterval") {
+      const arg = node.arguments[0];
+      if (!arg) return null;
+      if (arg.type !== "StringLiteral" && arg.type !== "TemplateLiteral") return null;
+      return { node: arg, sink: `${name} with a string` };
+    }
+    return null;
+  },
+  message: (f) => `${f.sink} compiles and runs a string as code. Whatever produced that string now decides what your process does.`,
+  fix: "const handlers = { save, cancel };\nhandlers[action]?.();"
+};
+var URL_ATTRIBUTES = /* @__PURE__ */ new Set(["href", "src", "action", "formAction", "poster"]);
+var URL_GUARD = /startsWith\(\s*['"]https?:|new URL\(|\^https\?:|isSafeUrl|sanitizeUrl|encodeURI/;
+var XSS_06 = {
+  id: "XSS-06",
+  title: "Link target with no protocol check",
+  severity: "medium",
+  owasp2025: "A05",
+  cwe: ["CWE-79", "CWE-601"],
+  languages: ["jsx", "tsx"],
+  prefilter: /href=\{|src=\{|action=\{/,
+  nodeTypes: ["JSXAttribute"],
+  match(node, ctx) {
+    const name = node.name?.name;
+    if (!URL_ATTRIBUTES.has(name)) return null;
+    const value = node.value;
+    if (value?.type !== "JSXExpressionContainer") return null;
+    const expression = value.expression;
+    if (isLiteral(expression)) return null;
+    const text = ctx.source.slice(expression.start, expression.end);
+    if (/^`\//.test(text) || /^['"]\//.test(text)) return null;
+    const looksExternal = ctx.isTainted(expression) || /url|href|link|redirect|website|homepage/i.test(text);
+    if (!looksExternal) return null;
+    if (URL_GUARD.test(ctx.source)) return null;
+    return { node, attribute: name, value: text.slice(0, 60) };
+  },
+  message: (f) => `${f.attribute} is set from ${f.value} with no protocol check. A value starting with javascript: runs as script when the link is clicked.`,
+  fix: "const safe = /^https?:\\/\\//.test(url) ? url : '#';"
+};
+var MSG_01 = {
+  id: "MSG-01",
+  title: "postMessage handler with no origin check",
+  severity: "high",
+  owasp2025: "A01",
+  cwe: ["CWE-346"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /addEventListener\s*\(\s*['"]message['"]/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full || lastSegment(full) !== "addEventListener") return null;
+    if (staticString(node.arguments[0]) !== "message") return null;
+    const handler = node.arguments[1];
+    if (!handler) return null;
+    const scope = handler.type === "FunctionExpression" || handler.type === "ArrowFunctionExpression" ? ctx.source.slice(handler.start, handler.end) : ctx.source;
+    if (/\.origin\s*(===|!==|==|!=)|\.origin\b[^=]*(includes|has|indexOf)/.test(scope)) return null;
+    return { node };
+  },
+  message: () => "This message handler reads event.data without checking event.origin first. Any page that can get a reference to this window can send it whatever it likes.",
+  fix: "window.addEventListener('message', (event) => {\n  if (event.origin !== TRUSTED_ORIGIN) return;\n  handle(event.data);\n});"
+};
+var LINK_01 = {
+  id: "LINK-01",
+  title: "New tab link without rel noopener",
+  severity: "low",
+  owasp2025: "A02",
+  cwe: ["CWE-1022"],
+  languages: ["jsx", "tsx"],
+  prefilter: /_blank/,
+  nodeTypes: ["JSXOpeningElement"],
+  match(node, ctx) {
+    let isBlank = false;
+    let rel = null;
+    for (const attribute of node.attributes ?? []) {
+      if (attribute.type !== "JSXAttribute") continue;
+      const name = attribute.name?.name;
+      if (name === "target" && staticString(attribute.value) === "_blank") isBlank = true;
+      if (name === "rel") rel = attribute.value;
+    }
+    if (!isBlank) return null;
+    const relText = rel ? ctx.source.slice(rel.start, rel.end) : "";
+    if (/noopener/.test(relText)) return null;
+    return { node };
+  },
+  message: () => 'A link opened with target="_blank" gives the new page a handle on this one through window.opener, which lets it navigate your tab somewhere else.',
+  fix: '<a href={url} target="_blank" rel="noopener noreferrer">'
+};
+var xss_default = [XSS_01, XSS_02, XSS_05, XSS_06, MSG_01, LINK_01];
+
+// src/rules/react/next.js
+import path2 from "node:path";
+var AUTH_CALL = /\bauth\s*\(|getServerSession|getSession|currentUser|requireAuth|requireUser|getUser\s*\(|verifySession|assertAuthenticated|withAuth|clerkClient|getToken\s*\(/;
+var AUTHZ_TERM = /\brole\b|\bpermission\b|\bcan[A-Z]|\bisAdmin\b|\bownerId\b|\borgId\b|\btenantId\b/;
+function isMiddlewareFile(filePath) {
+  const base = path2.basename(String(filePath));
+  return /^middleware\.(js|ts|mjs|cjs)$/.test(base);
+}
+var NEXT_MW = {
+  id: "NEXT-MW",
+  title: "Middleware used as the only authorization check",
+  severity: "high",
+  owasp2025: "A01",
+  cwe: ["CWE-863", "CWE-862"],
+  languages: ["js", "jsx", "ts", "tsx"],
+  fileWide: true,
+  prefilter: /x-middleware-subrequest|NextResponse|export\s+(async\s+)?function\s+middleware|export\s+const\s+config/,
+  nodeTypes: ["Program", "CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    if (node.type !== "Program") {
+      const full = memberName(node.callee);
+      if (!full || !["get", "has"].includes(lastSegment(full))) return null;
+      const header = staticString(node.arguments[0]);
+      if (!header || header.toLowerCase() !== "x-middleware-subrequest") return null;
+      return {
+        node,
+        kind: "header",
+        severityHint: "critical"
+      };
+    }
+    if (!isMiddlewareFile(ctx.filePath)) return null;
+    if (!AUTH_CALL.test(ctx.source) && !/redirect|rewrite/.test(ctx.source)) return null;
+    if (!/redirect|rewrite|NextResponse/.test(ctx.source)) return null;
+    if (ctx.state.get("NEXT-MW")) return null;
+    ctx.state.set("NEXT-MW", true);
+    return { node, kind: "middleware" };
+  },
+  message: (f) => f.kind === "header" ? "This code trusts the x-middleware-subrequest header. That header is what CVE-2025-29927 used to skip middleware entirely, and it comes from the client." : "This middleware decides who gets in. CVE-2025-29927 let a request header skip middleware completely, so the same check has to exist in the route handler or server action as well. Upgrade to 12.3.5, 13.5.9, 14.2.25, or 15.2.3 and above.",
+  fix: "Repeat the auth check inside the route handler or server action. Treat middleware as a fast path, not a boundary."
+};
+var SERVER_ACTION = {
+  id: "SERVER-ACTION",
+  title: "Server action with no auth check",
+  severity: "high",
+  owasp2025: "A01",
+  cwe: ["CWE-862", "CWE-306"],
+  api: "API5",
+  languages: ["js", "jsx", "ts", "tsx"],
+  fileWide: true,
+  prefilter: /['"]use server['"]/,
+  nodeTypes: ["FunctionDeclaration", "ArrowFunctionExpression", "FunctionExpression"],
+  match(node, ctx, parent) {
+    const fileLevel = /^\s*['"]use server['"]/m.test(ctx.source.slice(0, 200));
+    const ownDirective = (node.body?.directives ?? []).some(
+      (directive) => directive.value?.value === "use server"
+    );
+    if (!fileLevel && !ownDirective) return null;
+    if (!node.async) return null;
+    const exported = parent?.type === "ExportNamedDeclaration" || parent?.type === "ExportDefaultDeclaration" || parent?.type === "VariableDeclarator" && /export/.test(ctx.source.slice(Math.max(0, node.start - 80), node.start));
+    if (!exported && !ownDirective) return null;
+    const body = ctx.source.slice(node.start, node.end);
+    if (AUTH_CALL.test(body)) return null;
+    if (AUTHZ_TERM.test(body) && /where|filter/.test(body)) return null;
+    const name = node.id?.name ?? (parent?.type === "VariableDeclarator" ? parent.id?.name : null) ?? "this server action";
+    return { node, name };
+  },
+  message: (f) => `${f.name} is a server action, which means it is a public HTTP endpoint. It does not inherit protection from the page that calls it, and this one checks nothing before it runs.`,
+  fix: "'use server';\nexport async function deleteProject(id) {\n  const session = await auth();\n  if (!session) throw new Error('unauthorized');\n  const parsed = z.string().uuid().parse(id);\n  await db.project.delete({ where: { id: parsed, orgId: session.orgId } });\n}"
+};
+var NEXT_IMG = {
+  id: "NEXT-IMG",
+  title: "Image optimizer accepts any host",
+  severity: "medium",
+  owasp2025: "A10",
+  cwe: ["CWE-400", "CWE-918"],
+  languages: ["js", "ts", "mjs", "cjs"],
+  prefilter: /remotePatterns|domains\s*:/,
+  nodeTypes: ["ObjectProperty", "Property"],
+  match(node, ctx) {
+    const key = node.key?.name ?? node.key?.value;
+    if (key === "remotePatterns") {
+      if (node.value?.type !== "ArrayExpression") return null;
+      for (const element of node.value.elements) {
+        if (element?.type !== "ObjectExpression") continue;
+        const hostname = staticString(objectValue(element, "hostname"));
+        if (hostname === null || hostname === "**" || hostname === "*") {
+          return { node: element, kind: "remotePatterns has an entry with no hostname limit" };
+        }
+      }
+      return null;
+    }
+    if (key === "domains") {
+      if (node.value?.type !== "ArrayExpression") return null;
+      const wild = node.value.elements.some((element) => {
+        const value = staticString(element);
+        return value === "*" || value === "**";
+      });
+      if (!wild) return null;
+      return { node, kind: "the images domains list contains a wildcard" };
+    }
+    return null;
+  },
+  message: (f) => `${f.kind}, so /_next/image will fetch and re-encode an image from anywhere. That is a request your server makes on request, and decoding a hostile image costs real CPU.`,
+  fix: "images: { remotePatterns: [{ protocol: 'https', hostname: 'cdn.example.com' }] }"
+};
+var next_default = [NEXT_MW, SERVER_ACTION, NEXT_IMG];
+
 // src/rules/index.js
 var PACKS = {
   "node-core": [...injection_default, ...ssrf_default, ...deserialization_default, ...secrets_config_default, ...prototype_pollution_default],
   "node-auth": [...auth_default, ...access_default],
-  "node-dos": [...limits_default]
+  "node-dos": [...limits_default],
+  react: [...xss_default, ...next_default]
 };
 var RULES = Object.values(PACKS).flat();
 var RULES_BY_ID = new Map(RULES.map((rule) => [rule.id, rule]));
 
-// src/hooks/util.js
+// src/supply-chain/dependencies.js
 import fs2 from "node:fs";
-import path2 from "node:path";
+import path3 from "node:path";
+
+// src/supply-chain/data/framework-advisories.json
+var framework_advisories_default = {
+  note: "Version ranges for framework issues a source scanner cannot see. An exposed dev server, a middleware bypass, or a vulnerable server component package is a property of the version you installed, not of your code. Thresholds come from the vendor advisories and are refreshed by .github/workflows/threat-data.yml. Live OSV lookups and npm audit remain authoritative.",
+  updated: "2026-08-23",
+  advisories: [
+    {
+      package: "next",
+      id: "CVE-2025-29927",
+      severity: "critical",
+      title: "Middleware authorization bypass",
+      summary: "A request carrying the x-middleware-subrequest header skipped middleware entirely. Anything protected only by middleware was open.",
+      action: "Upgrade. Until you can, strip x-middleware-subrequest at the edge and repeat the auth check inside the route handler.",
+      affectsOlderMajors: true,
+      fixes: [
+        { major: 15, fixed: "15.2.3" },
+        { major: 14, fixed: "14.2.25" },
+        { major: 13, fixed: "13.5.9" },
+        { major: 12, fixed: "12.3.5" }
+      ]
+    },
+    {
+      package: "next",
+      id: "CVE-2026-64644",
+      severity: "medium",
+      title: "Image optimizer resource exhaustion",
+      summary: "A self hosted instance processing a remote image can be made to burn CPU on a crafted file.",
+      action: "Upgrade, and narrow images.remotePatterns to the hosts you actually use.",
+      fixes: [
+        { major: 16, fixed: "16.2.11" },
+        { major: 15, fixed: "15.5.21" }
+      ]
+    },
+    {
+      package: "react-server-dom-webpack",
+      id: "CVE-2025-55182",
+      severity: "critical",
+      title: "Unauthenticated remote code execution in React Server Components",
+      summary: "Server function requests were deserialized unsafely, which gave remote code execution with no authentication.",
+      action: "Upgrade immediately. This one does not need a server action of your own to be reachable.",
+      fixes: [
+        { major: 19, minor: 2, fixed: "19.2.1" },
+        { major: 19, minor: 1, fixed: "19.1.2" },
+        { major: 19, minor: 0, fixed: "19.0.1" }
+      ]
+    },
+    {
+      package: "react-server-dom-turbopack",
+      id: "CVE-2025-55182",
+      severity: "critical",
+      title: "Unauthenticated remote code execution in React Server Components",
+      summary: "Server function requests were deserialized unsafely, which gave remote code execution with no authentication.",
+      action: "Upgrade immediately.",
+      fixes: [
+        { major: 19, minor: 2, fixed: "19.2.1" },
+        { major: 19, minor: 1, fixed: "19.1.2" },
+        { major: 19, minor: 0, fixed: "19.0.1" }
+      ]
+    },
+    {
+      package: "react-server-dom-parcel",
+      id: "CVE-2025-55182",
+      severity: "critical",
+      title: "Unauthenticated remote code execution in React Server Components",
+      summary: "Server function requests were deserialized unsafely, which gave remote code execution with no authentication.",
+      action: "Upgrade immediately.",
+      fixes: [
+        { major: 19, minor: 2, fixed: "19.2.1" },
+        { major: 19, minor: 1, fixed: "19.1.2" },
+        { major: 19, minor: 0, fixed: "19.0.1" }
+      ]
+    },
+    {
+      package: "nuxt",
+      id: "CVE-2025-24360",
+      severity: "medium",
+      title: "Development server source disclosure through permissive CORS",
+      summary: "A dev server reachable from the network could hand its source to any origin.",
+      action: "Upgrade, and never bind a dev server to a network interface.",
+      fixes: [{ major: 3, fixed: "3.15.3" }]
+    },
+    {
+      package: "nuxt",
+      id: "GHSA-nuxt-2026-server-islands",
+      severity: "high",
+      title: "Server island and route rule issues fixed in 2026",
+      summary: "Fixes covered server island instantiation, a route rule authorization bypass, a server component denial of service, and cached payloads leaking across users.",
+      action: "Upgrade. Do not treat route rules as an authorization boundary.",
+      fixes: [
+        { major: 4, fixed: "4.5.1" },
+        { major: 3, fixed: "3.21.10" }
+      ]
+    },
+    {
+      package: "vite",
+      id: "CVE-2025-30208 and CVE-2025-31125",
+      severity: "high",
+      title: "Development server served files outside the allowed roots",
+      summary: "Crafted requests using the @fs prefix and query tricks read arbitrary files from the machine running the dev server.",
+      action: "Upgrade, and keep the dev server on localhost. It is not built to face a network.",
+      fixes: [
+        { major: 6, minor: 2, fixed: "6.2.4" },
+        { major: 6, minor: 1, fixed: "6.1.3" },
+        { major: 6, minor: 0, fixed: "6.0.13" },
+        { major: 5, fixed: "5.4.16" },
+        { major: 4, fixed: "4.5.11" }
+      ]
+    }
+  ]
+};
+
+// src/supply-chain/dependencies.js
+function readLockedVersions(projectRoot) {
+  const found = /* @__PURE__ */ new Map();
+  for (const file of ["package-lock.json", "npm-shrinkwrap.json"]) {
+    let lock;
+    try {
+      lock = JSON.parse(fs2.readFileSync(path3.join(projectRoot, file), "utf8"));
+    } catch {
+      continue;
+    }
+    for (const [key, value] of Object.entries(lock.packages ?? {})) {
+      const name = key.replace(/^node_modules\//, "").replace(/.*\/node_modules\//, "");
+      if (name && value?.version && !found.has(name)) found.set(name, value.version);
+    }
+    for (const [name, value] of Object.entries(lock.dependencies ?? {})) {
+      if (value?.version && !found.has(name)) found.set(name, value.version);
+    }
+  }
+  return found;
+}
+function parseVersion(value) {
+  if (!value) return null;
+  const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(value));
+  if (match) return [Number(match[1]), Number(match[2]), Number(match[3])];
+  const short = /(\d+)\.(\d+)/.exec(String(value));
+  if (short) return [Number(short[1]), Number(short[2]), 0];
+  const major = /(\d+)/.exec(String(value));
+  if (major) return [Number(major[1]), 0, 0];
+  return null;
+}
+function compareVersions(a, b) {
+  const left = Array.isArray(a) ? a : parseVersion(a);
+  const right = Array.isArray(b) ? b : parseVersion(b);
+  if (!left || !right) return 0;
+  for (let i = 0; i < 3; i += 1) {
+    if (left[i] !== right[i]) return left[i] < right[i] ? -1 : 1;
+  }
+  return 0;
+}
+function rangeMinimum(range) {
+  if (!range) return null;
+  const text = String(range).trim();
+  if (text === "*" || text === "latest" || text === "") return null;
+  if (/^(file|link|workspace|git|github|https?):/i.test(text)) return null;
+  return parseVersion(text);
+}
+function fixFor(advisory, version) {
+  const [major, minor] = version;
+  const exact = advisory.fixes.find((fix) => fix.major === major && fix.minor === minor);
+  if (exact) return exact;
+  const byMajor = advisory.fixes.find((fix) => fix.major === major && fix.minor === void 0);
+  if (byMajor) return byMajor;
+  const majors = advisory.fixes.map((fix) => fix.major);
+  if (major < Math.min(...majors)) {
+    return advisory.affectsOlderMajors ? { major, fixed: null, tooOld: true } : null;
+  }
+  const sameMajor = advisory.fixes.filter((fix) => fix.major === major);
+  if (sameMajor.length > 0) {
+    const highest = sameMajor.reduce(
+      (best, fix) => compareVersions(fix.fixed, best.fixed) > 0 ? fix : best
+    );
+    if (minor < (highest.minor ?? 0)) return highest;
+  }
+  return null;
+}
+function checkPackage(name, version, advisories = framework_advisories_default.advisories) {
+  const parsed = Array.isArray(version) ? version : parseVersion(version);
+  if (!parsed) return [];
+  const matches = [];
+  for (const advisory of advisories) {
+    if (advisory.package !== name) continue;
+    const fix = fixFor(advisory, parsed);
+    if (!fix) continue;
+    if (fix.tooOld) {
+      matches.push({ ...advisory, installed: parsed.join("."), fixed: null });
+      continue;
+    }
+    if (compareVersions(parsed, fix.fixed) < 0) {
+      matches.push({ ...advisory, installed: parsed.join("."), fixed: fix.fixed });
+    }
+  }
+  return matches;
+}
+function checkDependencies(pkg, locked = /* @__PURE__ */ new Map()) {
+  if (!pkg) return [];
+  const declared = {
+    ...pkg.dependencies ?? {},
+    ...pkg.devDependencies ?? {},
+    ...pkg.optionalDependencies ?? {}
+  };
+  const seen = /* @__PURE__ */ new Set();
+  const findings = [];
+  const consider = (name, version, exact) => {
+    const key = `${name}@${version}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    for (const match of checkPackage(name, version)) {
+      findings.push({
+        ruleId: match.package === "next" ? "NEXT-VER" : match.package.startsWith("react-server-dom") ? "RSC-VER" : match.package === "nuxt" ? "NUXT-VER" : "VITE-VER",
+        package: name,
+        advisory: match.id,
+        severity: exact ? match.severity : downgrade(match.severity),
+        title: match.title,
+        summary: match.summary,
+        action: match.action,
+        installed: match.installed,
+        fixed: match.fixed,
+        exact
+      });
+    }
+  };
+  for (const [name, version] of locked) consider(name, version, true);
+  for (const [name, range] of Object.entries(declared)) {
+    if (locked.has(name)) continue;
+    const min = rangeMinimum(range);
+    if (!min) continue;
+    consider(name, min, false);
+  }
+  return findings;
+}
+function downgrade(severity) {
+  if (severity === "critical") return "high";
+  if (severity === "high") return "medium";
+  return "low";
+}
+function describeDependencyFinding(finding) {
+  const version = finding.exact ? `${finding.package}@${finding.installed}` : `${finding.package} (range allows ${finding.installed})`;
+  const fix = finding.fixed ? `Upgrade to ${finding.fixed} or later.` : "This major version line has no fix. Move to a supported one.";
+  return `${finding.ruleId} ${version}: ${finding.title} (${finding.advisory}). ${finding.summary} ${fix} ${finding.action}`;
+}
+
+// src/hooks/util.js
+import fs3 from "node:fs";
+import path4 from "node:path";
 function findUp(startDir, filename, limit = 30) {
-  let dir = path2.resolve(startDir);
+  let dir = path4.resolve(startDir);
   for (let depth = 0; depth < limit; depth += 1) {
-    const candidate = path2.join(dir, filename);
-    if (fs2.existsSync(candidate)) return candidate;
-    const parent = path2.dirname(dir);
+    const candidate = path4.join(dir, filename);
+    if (fs3.existsSync(candidate)) return candidate;
+    const parent = path4.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -17118,14 +17666,14 @@ function readPackageJson(startDir) {
   const file = findUp(startDir, "package.json");
   if (!file) return { pkg: null, root: startDir, file: null };
   try {
-    return { pkg: JSON.parse(fs2.readFileSync(file, "utf8")), root: path2.dirname(file), file };
+    return { pkg: JSON.parse(fs3.readFileSync(file, "utf8")), root: path4.dirname(file), file };
   } catch {
-    return { pkg: null, root: path2.dirname(file), file };
+    return { pkg: null, root: path4.dirname(file), file };
   }
 }
 function relativeTo(root, filePath) {
   try {
-    const rel = path2.relative(root, filePath);
+    const rel = path4.relative(root, filePath);
     return rel.startsWith("..") ? filePath : rel;
   } catch {
     return filePath;
@@ -17160,31 +17708,31 @@ function parseArgs(argv) {
 function* walkFiles(dir, limit, seen = { count: 0 }) {
   let entries;
   try {
-    entries = fs3.readdirSync(dir, { withFileTypes: true });
+    entries = fs4.readdirSync(dir, { withFileTypes: true });
   } catch {
     return;
   }
   for (const entry of entries) {
     if (seen.count >= limit) return;
-    const full = path3.join(dir, entry.name);
+    const full = path5.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name) || entry.name.startsWith(".")) continue;
       yield* walkFiles(full, limit, seen);
       continue;
     }
     if (!entry.isFile()) continue;
-    if (!SUPPORTED_EXTENSIONS.has(path3.extname(entry.name).toLowerCase())) continue;
+    if (!SUPPORTED_EXTENSIONS.has(path5.extname(entry.name).toLowerCase())) continue;
     seen.count += 1;
     yield full;
   }
 }
 function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
-  const target = path3.resolve(args.target);
+  const target = path5.resolve(args.target);
   const config = loadConfig(target);
   const { pkg, root } = readPackageJson(target);
   const projectRoot = config.projectRoot || root || target;
-  const stats = fs3.existsSync(target) ? fs3.statSync(target) : null;
+  const stats = fs4.existsSync(target) ? fs4.statSync(target) : null;
   if (!stats) {
     process.stderr.write(`guardrails-js: ${target} does not exist
 `);
@@ -17198,7 +17746,7 @@ function main(argv = process.argv.slice(2)) {
     if (isExcluded(relative, config)) continue;
     let source;
     try {
-      source = fs3.readFileSync(file, "utf8");
+      source = fs4.readFileSync(file, "utf8");
     } catch {
       continue;
     }
@@ -17213,6 +17761,25 @@ function main(argv = process.argv.slice(2)) {
       wholeFile: true
     });
     all.push(...findings);
+  }
+  if (pkg) {
+    const locked = readLockedVersions(projectRoot);
+    for (const match of checkDependencies(pkg, locked)) {
+      all.push({
+        ruleId: match.ruleId,
+        title: match.title,
+        severity: match.severity,
+        owasp2025: "A03",
+        cwe: [],
+        api: null,
+        line: 1,
+        column: 1,
+        evidence: `${match.package}@${match.installed}`,
+        message: describeDependencyFinding(match),
+        fix: match.fixed ? `npm install ${match.package}@^${match.fixed}` : match.action,
+        filePath: "package.json"
+      });
+    }
   }
   const counts = {};
   for (const finding of all) counts[finding.severity] = (counts[finding.severity] ?? 0) + 1;

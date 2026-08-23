@@ -1,0 +1,108 @@
+{
+  "note": "Version ranges for framework issues a source scanner cannot see. An exposed dev server, a middleware bypass, or a vulnerable server component package is a property of the version you installed, not of your code. Thresholds come from the vendor advisories and are refreshed by .github/workflows/threat-data.yml. Live OSV lookups and npm audit remain authoritative.",
+  "updated": "2026-08-23",
+  "advisories": [
+    {
+      "package": "next",
+      "id": "CVE-2025-29927",
+      "severity": "critical",
+      "title": "Middleware authorization bypass",
+      "summary": "A request carrying the x-middleware-subrequest header skipped middleware entirely. Anything protected only by middleware was open.",
+      "action": "Upgrade. Until you can, strip x-middleware-subrequest at the edge and repeat the auth check inside the route handler.",
+      "affectsOlderMajors": true,
+      "fixes": [
+        { "major": 15, "fixed": "15.2.3" },
+        { "major": 14, "fixed": "14.2.25" },
+        { "major": 13, "fixed": "13.5.9" },
+        { "major": 12, "fixed": "12.3.5" }
+      ]
+    },
+    {
+      "package": "next",
+      "id": "CVE-2026-64644",
+      "severity": "medium",
+      "title": "Image optimizer resource exhaustion",
+      "summary": "A self hosted instance processing a remote image can be made to burn CPU on a crafted file.",
+      "action": "Upgrade, and narrow images.remotePatterns to the hosts you actually use.",
+      "fixes": [
+        { "major": 16, "fixed": "16.2.11" },
+        { "major": 15, "fixed": "15.5.21" }
+      ]
+    },
+    {
+      "package": "react-server-dom-webpack",
+      "id": "CVE-2025-55182",
+      "severity": "critical",
+      "title": "Unauthenticated remote code execution in React Server Components",
+      "summary": "Server function requests were deserialized unsafely, which gave remote code execution with no authentication.",
+      "action": "Upgrade immediately. This one does not need a server action of your own to be reachable.",
+      "fixes": [
+        { "major": 19, "minor": 2, "fixed": "19.2.1" },
+        { "major": 19, "minor": 1, "fixed": "19.1.2" },
+        { "major": 19, "minor": 0, "fixed": "19.0.1" }
+      ]
+    },
+    {
+      "package": "react-server-dom-turbopack",
+      "id": "CVE-2025-55182",
+      "severity": "critical",
+      "title": "Unauthenticated remote code execution in React Server Components",
+      "summary": "Server function requests were deserialized unsafely, which gave remote code execution with no authentication.",
+      "action": "Upgrade immediately.",
+      "fixes": [
+        { "major": 19, "minor": 2, "fixed": "19.2.1" },
+        { "major": 19, "minor": 1, "fixed": "19.1.2" },
+        { "major": 19, "minor": 0, "fixed": "19.0.1" }
+      ]
+    },
+    {
+      "package": "react-server-dom-parcel",
+      "id": "CVE-2025-55182",
+      "severity": "critical",
+      "title": "Unauthenticated remote code execution in React Server Components",
+      "summary": "Server function requests were deserialized unsafely, which gave remote code execution with no authentication.",
+      "action": "Upgrade immediately.",
+      "fixes": [
+        { "major": 19, "minor": 2, "fixed": "19.2.1" },
+        { "major": 19, "minor": 1, "fixed": "19.1.2" },
+        { "major": 19, "minor": 0, "fixed": "19.0.1" }
+      ]
+    },
+    {
+      "package": "nuxt",
+      "id": "CVE-2025-24360",
+      "severity": "medium",
+      "title": "Development server source disclosure through permissive CORS",
+      "summary": "A dev server reachable from the network could hand its source to any origin.",
+      "action": "Upgrade, and never bind a dev server to a network interface.",
+      "fixes": [{ "major": 3, "fixed": "3.15.3" }]
+    },
+    {
+      "package": "nuxt",
+      "id": "GHSA-nuxt-2026-server-islands",
+      "severity": "high",
+      "title": "Server island and route rule issues fixed in 2026",
+      "summary": "Fixes covered server island instantiation, a route rule authorization bypass, a server component denial of service, and cached payloads leaking across users.",
+      "action": "Upgrade. Do not treat route rules as an authorization boundary.",
+      "fixes": [
+        { "major": 4, "fixed": "4.5.1" },
+        { "major": 3, "fixed": "3.21.10" }
+      ]
+    },
+    {
+      "package": "vite",
+      "id": "CVE-2025-30208 and CVE-2025-31125",
+      "severity": "high",
+      "title": "Development server served files outside the allowed roots",
+      "summary": "Crafted requests using the @fs prefix and query tricks read arbitrary files from the machine running the dev server.",
+      "action": "Upgrade, and keep the dev server on localhost. It is not built to face a network.",
+      "fixes": [
+        { "major": 6, "minor": 2, "fixed": "6.2.4" },
+        { "major": 6, "minor": 1, "fixed": "6.1.3" },
+        { "major": 6, "minor": 0, "fixed": "6.0.13" },
+        { "major": 5, "fixed": "5.4.16" },
+        { "major": 4, "fixed": "4.5.11" }
+      ]
+    }
+  ]
+}
