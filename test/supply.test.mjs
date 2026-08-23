@@ -14,7 +14,9 @@ import { runManifestRules, isManifestFile } from '../src/engine/manifest.js';
 import { loadConfig } from '../src/engine/config.js';
 import { RULES } from '../src/rules/index.js';
 
-const config = loadConfig('/nonexistent-so-defaults-apply');
+// The shipped floor is medium. A test harness has to see everything, or a low
+// severity rule could never prove that it fires.
+const config = { ...loadConfig('/nonexistent-so-defaults-apply'), minSeverity: 'low' };
 
 const roots = [];
 

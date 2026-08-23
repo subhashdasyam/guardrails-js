@@ -346,7 +346,15 @@ Rules that would need to reason across functions to be certain, such as IDOR-01,
 
 ## 🔧 Configuration
 
-Optional `.guardrails-js.json` in your project root:
+Installing asks three questions. All three are yes or no, all three default to yes, and pressing through without reading gets you sensible behaviour:
+
+| Question | Default | What no does |
+|---|---|---|
+| Check packages online before installing | Yes | Skips osv.dev and the registry. Offline checks keep working |
+| Report performance findings | Yes | Only security findings. Never interrupts either way |
+| Send rules at session start | Yes | Saves about a thousand tokens per session |
+
+Everything else lives in an optional `.guardrails-js.json` in your project root, which nobody is prompted for:
 
 ```json
 {
@@ -354,10 +362,13 @@ Optional `.guardrails-js.json` in your project root:
   "severityOverrides": { "HTTP-01": "low" },
   "excludePaths": ["**/legacy/**"],
   "network": true,
-  "minSeverity": "low",
+  "performance": true,
+  "minSeverity": "medium",
   "priming": true
 }
 ```
+
+`minSeverity` is one of `low`, `medium`, `high`, `critical` and covers security findings only. It defaults to `medium`, which hides two low severity rules. Performance findings are not on that scale and answer to `performance` instead, so raising the floor cannot switch them off by accident.
 
 To silence one line, say why:
 

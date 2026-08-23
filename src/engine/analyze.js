@@ -6,7 +6,7 @@ import { scanTemplate } from './vue-template.js';
 import { collectTaintedNames, isTaintedExpr, describeSource, hasGuard } from './taint.js';
 import { changedRangeFromToolInput, reportWindow, inWindow, lineOf, lineText } from './scope.js';
 import { collectSuppressions } from './suppress.js';
-import { meetsMinSeverity } from './config.js';
+import { shouldReport } from './config.js';
 import { snippet } from '../rules/helpers.js';
 
 const FUNCTION_TYPES = new Set([
@@ -185,7 +185,7 @@ export function analyze(options) {
       if (suppressions.isSuppressed(rule.id, line)) continue;
 
       const severity = config.severityFor({ ...rule, severity: hit.severityHint ?? rule.severity });
-      if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+      if (!shouldReport(severity, config)) continue;
 
       findings.push({
         ruleId: rule.id,
@@ -238,7 +238,7 @@ export function analyze(options) {
           ...rule,
           severity: hit.severityHint ?? rule.severity,
         });
-        if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+        if (!shouldReport(severity, config)) continue;
 
         findings.push({
           ruleId: rule.id,
@@ -284,7 +284,7 @@ export function analyze(options) {
         ...rule,
         severity: hit.severityHint ?? rule.severity,
       });
-      if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+      if (!shouldReport(severity, config)) continue;
 
       findings.push({
         ruleId: rule.id,

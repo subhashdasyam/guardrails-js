@@ -6,6 +6,13 @@ import path from 'node:path';
 
 export const SEVERITY_ORDER = ['perf', 'low', 'medium', 'high', 'critical'];
 
+// A severity floor and a performance switch are two different questions, and
+// tying them together was a design mistake. Performance sits below low on the
+// scale, so a floor of medium quietly removed the entire performance pack. They
+// are now separate: minSeverity governs security findings, performance governs
+// the rest.
+export const SECURITY_SEVERITIES = ['low', 'medium', 'high', 'critical'];
+
 const DEFAULTS = {
   severityOverrides: {},
   disableRules: [],
@@ -20,9 +27,12 @@ const DEFAULTS = {
   network: true,
   primingPacks: ['auto'],
   priming: true,
-  // Everything by default. Performance findings sit below low, so a default of
-  // "low" would have silently hidden the whole performance pack.
-  minSeverity: 'perf',
+  // Security findings below this are dropped. Performance findings are not on
+  // this scale, see the note above SECURITY_SEVERITIES.
+  minSeverity: 'medium',
+  // Performance findings are advisory and never interrupt, so they are on by
+  // default and switched separately.
+  performance: true,
 };
 
 // There is no modelEscalation flag here on purpose. Model escalation ships as
@@ -78,8 +88,14 @@ export function loadConfig(cwd = process.cwd()) {
   if (fromFile.priming === undefined) {
     config.priming = envBool('CLAUDE_PLUGIN_OPTION_PRIMING', DEFAULTS.priming);
   }
-  if (fromFile.minSeverity === undefined && process.env.CLAUDE_PLUGIN_OPTION_MIN_SEVERITY) {
-    config.minSeverity = process.env.CLAUDE_PLUGIN_OPTION_MIN_SEVERITY;
+  if (fromFile.performance === undefined) {
+    config.performance = envBool('CLAUDE_PLUGIN_OPTION_PERFORMANCE', DEFAULTS.performance);
+  }
+
+  // Nothing validates a value coming from settings or the environment, so a
+  // typo would otherwise silently drop every finding.
+  if (!SECURITY_SEVERITIES.includes(config.minSeverity)) {
+    config.minSeverity = DEFAULTS.minSeverity;
   }
 
   const disabled = new Set(config.disableRules.map((id) => String(id).toUpperCase()));
@@ -101,6 +117,15 @@ export function loadConfig(cwd = process.cwd()) {
   };
 
   return config;
+}
+
+/**
+ * Should this finding be shown? Performance answers to its own switch, and
+ * everything else answers to the severity floor.
+ */
+export function shouldReport(severity, config) {
+  if (severity === 'perf') return config.performance !== false;
+  return meetsMinSeverity(severity, config.minSeverity);
 }
 
 export function meetsMinSeverity(severity, minSeverity) {

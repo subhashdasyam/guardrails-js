@@ -118,7 +118,7 @@ test('the settings panel advertises the same defaults the code uses', async () =
 
   const pairs = [
     ['network', code.network],
-    ['min_severity', code.minSeverity],
+    ['performance', code.performance],
     ['priming', code.priming],
   ];
 
@@ -132,6 +132,21 @@ test('the settings panel advertises the same defaults the code uses', async () =
         `but the code uses ${JSON.stringify(codeDefault)}. Accepting the panel default would ` +
         'then change behaviour without anyone asking for it.',
     );
+  }
+});
+
+test('nothing in the settings panel asks people to type a value', () => {
+  // The manifest has no enum, options, or choices field, and a string always
+  // renders as a free text box that nothing validates. So every option people
+  // are prompted for is a boolean, which renders as a real yes or no choice.
+  for (const [key, option] of Object.entries(plugin.userConfig ?? {})) {
+    assert.equal(
+      option.type,
+      'boolean',
+      `${key} is type ${option.type}, which renders as free text. Use a boolean, ` +
+        'or move the setting to .guardrails-js.json where it is not prompted for.',
+    );
+    assert.equal(option.default, true, `${key} should default to yes so nobody has to think`);
   }
 });
 

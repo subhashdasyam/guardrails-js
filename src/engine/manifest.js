@@ -10,7 +10,7 @@ import path from 'node:path';
 
 import supplyRules from '../rules/supply/manifest.js';
 import { readLockedVersions } from '../supply-chain/dependencies.js';
-import { meetsMinSeverity } from './config.js';
+import { shouldReport } from './config.js';
 
 const LOCKFILES = ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb'];
 
@@ -98,7 +98,7 @@ export function runManifestRules(projectRoot, config, pkg = null, rules = supply
     if (!hit) continue;
 
     const severity = config.severityFor({ ...rule, severity: hit.severityHint ?? rule.severity });
-    if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+    if (!shouldReport(severity, config)) continue;
 
     findings.push({
       ruleId: rule.id,

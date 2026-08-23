@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0
+
+Nothing in the install prompt asks you to type a value any more, and one setting no longer switches off another.
+
+The manifest has no enum, options, or choices field, and a string option always renders as a free text box that nothing validates. So min_severity was a box where you could type anything, and typing something wrong silently changed what got reported. It is gone from the prompt.
+
+Installing now asks three yes or no questions, all defaulting to yes: check packages online, report performance findings, send rules at session start. Pressing through without reading gets sensible behaviour.
+
+The deeper problem was that a severity floor and a performance switch were the same setting. Performance sits below low on the severity scale, so choosing medium removed all thirteen performance rules without saying so. They are now separate. minSeverity covers security findings and defaults to medium. Performance answers to its own switch and defaults to on.
+
+An unusable severity value now falls back to the default rather than silently hiding everything, since nothing outside this code validates it.
+
 ## 1.1.2
 
 The settings panel advertised a default that did not match the code.

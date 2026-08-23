@@ -14622,6 +14622,7 @@ import path6 from "node:path";
 import fs from "node:fs";
 import path from "node:path";
 var SEVERITY_ORDER = ["perf", "low", "medium", "high", "critical"];
+var SECURITY_SEVERITIES = ["low", "medium", "high", "critical"];
 var DEFAULTS = {
   severityOverrides: {},
   disableRules: [],
@@ -14636,9 +14637,12 @@ var DEFAULTS = {
   network: true,
   primingPacks: ["auto"],
   priming: true,
-  // Everything by default. Performance findings sit below low, so a default of
-  // "low" would have silently hidden the whole performance pack.
-  minSeverity: "perf"
+  // Security findings below this are dropped. Performance findings are not on
+  // this scale, see the note above SECURITY_SEVERITIES.
+  minSeverity: "medium",
+  // Performance findings are advisory and never interrupt, so they are on by
+  // default and switched separately.
+  performance: true
 };
 function readJson(file) {
   try {
@@ -14681,8 +14685,11 @@ function loadConfig(cwd = process.cwd()) {
   if (fromFile.priming === void 0) {
     config.priming = envBool("CLAUDE_PLUGIN_OPTION_PRIMING", DEFAULTS.priming);
   }
-  if (fromFile.minSeverity === void 0 && process.env.CLAUDE_PLUGIN_OPTION_MIN_SEVERITY) {
-    config.minSeverity = process.env.CLAUDE_PLUGIN_OPTION_MIN_SEVERITY;
+  if (fromFile.performance === void 0) {
+    config.performance = envBool("CLAUDE_PLUGIN_OPTION_PERFORMANCE", DEFAULTS.performance);
+  }
+  if (!SECURITY_SEVERITIES.includes(config.minSeverity)) {
+    config.minSeverity = DEFAULTS.minSeverity;
   }
   const disabled = new Set(config.disableRules.map((id) => String(id).toUpperCase()));
   const overrides = {};
@@ -14700,6 +14707,10 @@ function loadConfig(cwd = process.cwd()) {
     return rule.severity;
   };
   return config;
+}
+function shouldReport(severity, config) {
+  if (severity === "perf") return config.performance !== false;
+  return meetsMinSeverity(severity, config.minSeverity);
 }
 function meetsMinSeverity(severity, minSeverity) {
   const have = SEVERITY_ORDER.indexOf(severity);
@@ -15672,7 +15683,7 @@ function analyze(options) {
       seen.add(key);
       if (suppressions.isSuppressed(rule.id, line)) continue;
       const severity = config.severityFor({ ...rule, severity: hit.severityHint ?? rule.severity });
-      if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+      if (!shouldReport(severity, config)) continue;
       findings.push({
         ruleId: rule.id,
         title: rule.title,
@@ -15712,7 +15723,7 @@ function analyze(options) {
           ...rule,
           severity: hit.severityHint ?? rule.severity
         });
-        if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+        if (!shouldReport(severity, config)) continue;
         findings.push({
           ruleId: rule.id,
           title: rule.title,
@@ -15749,7 +15760,7 @@ function analyze(options) {
         ...rule,
         severity: hit.severityHint ?? rule.severity
       });
-      if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+      if (!shouldReport(severity, config)) continue;
       findings.push({
         ruleId: rule.id,
         title: rule.title,
@@ -19066,7 +19077,7 @@ function runManifestRules(projectRoot, config, pkg = null, rules = manifest_defa
     }
     if (!hit) continue;
     const severity = config.severityFor({ ...rule, severity: hit.severityHint ?? rule.severity });
-    if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+    if (!shouldReport(severity, config)) continue;
     findings.push({
       ruleId: rule.id,
       title: rule.title,

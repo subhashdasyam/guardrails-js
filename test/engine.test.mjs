@@ -111,12 +111,35 @@ test('performance findings stay on the quiet channel', async () => {
   assert.equal(quiet.length, 1);
 });
 
-test('the default severity floor does not hide the performance pack', () => {
-  assert.equal(
-    config.minSeverity,
-    'perf',
-    'perf sits below low, so a floor of low would silently drop every performance rule',
+test('the severity floor cannot hide the performance pack', async () => {
+  // Performance used to sit below low on the same scale, so raising the floor
+  // to medium silently removed all thirteen performance rules. They are now
+  // separate questions.
+  const { shouldReport, loadConfig: load } = await import('../src/engine/config.js');
+  const shipped = load('/nonexistent-so-defaults-apply');
+
+  assert.equal(shipped.minSeverity, 'medium', 'the shipped floor for security findings');
+  assert.equal(shipped.performance, true, 'performance findings are on by default');
+
+  assert.ok(shouldReport('perf', shipped), 'a medium floor must not hide performance');
+  assert.ok(!shouldReport('low', shipped), 'a medium floor does hide low security findings');
+
+  assert.ok(
+    !shouldReport('perf', { ...shipped, performance: false }),
+    'and turning performance off is what hides them',
   );
+  assert.ok(
+    shouldReport('high', { ...shipped, performance: false }),
+    'which leaves security findings alone',
+  );
+});
+
+test('an unusable severity floor falls back instead of hiding everything', async () => {
+  const { loadConfig: load } = await import('../src/engine/config.js');
+  process.env.CLAUDE_PLUGIN_OPTION_MIN_SEVERITY = 'medum';
+  const typo = load('/nonexistent-so-defaults-apply');
+  delete process.env.CLAUDE_PLUGIN_OPTION_MIN_SEVERITY;
+  assert.equal(typo.minSeverity, 'medium', 'nothing validates these values but us');
 });
 
 test('vue template scanning', async () => {
