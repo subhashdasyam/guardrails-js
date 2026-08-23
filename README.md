@@ -1,13 +1,21 @@
-# 🛡️ guardrails-js
+<p align="center">
+  <img src="assets/images/guardrails-js-hero.jpg" alt="guardrails-js" width="820">
+</p>
 
-**Claude writes the SQL injection. This catches it before you ever see it.**
+<h1 align="center">🛡️ guardrails-js</h1>
 
-[![ci](https://github.com/subhashdasyam/guardrails-js/actions/workflows/ci.yml/badge.svg)](https://github.com/subhashdasyam/guardrails-js/actions/workflows/ci.yml)
-![node](https://img.shields.io/badge/node-%3E%3D20.10-brightgreen)
-![rules](https://img.shields.io/badge/rules-87-blue)
-![runtime deps](https://img.shields.io/badge/runtime%20deps-0-blue)
-![python](https://img.shields.io/badge/python-none-blue)
-![license](https://img.shields.io/badge/license-MIT-blue)
+<p align="center">
+  <b>Claude writes the SQL injection. This catches it before you ever see it.</b>
+</p>
+
+<p align="center">
+  <a href="https://github.com/subhashdasyam/guardrails-js/actions/workflows/ci.yml"><img src="https://github.com/subhashdasyam/guardrails-js/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D20.10-brightgreen" alt="node">
+  <img src="https://img.shields.io/badge/rules-87-blue" alt="rules">
+  <img src="https://img.shields.io/badge/runtime%20deps-0-blue" alt="runtime deps">
+  <img src="https://img.shields.io/badge/python-none-blue" alt="python">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
+</p>
 
 A Claude Code plugin that reads every file Claude writes, spots the unsafe and slow patterns, and tells Claude to fix them. In the same turn. Before the code reaches you.
 
