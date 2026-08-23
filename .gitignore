@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+*.log
+.claude/guardrails-js-report.md
+.guardrails-js.local.json
+coverage/
+.env
+.env.*
+!.env.example
