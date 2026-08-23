@@ -30,14 +30,29 @@ const SKIP_DIRS = new Set([
   'vendor',
 ]);
 
+const USAGE = `guardrails-js: scan JavaScript and TypeScript for insecure and slow patterns
+
+  guardrails-js [path] [options]
+
+  --format text|json   how to print the result, default text
+  --fail-on <severity> exit 1 when a finding at this level or above is present
+                       (critical, high, medium, low, perf)
+  --max <n>            stop after this many files, default 5000
+  --help               show this
+
+Findings map to OWASP Top 10:2025 and CWE. Rules that cannot be certain without
+reasoning across functions report at medium and below.
+`;
+
 function parseArgs(argv) {
-  const args = { target: '.', format: 'text', failOn: null, max: 5000 };
+  const args = { target: '.', format: 'text', failOn: null, max: 5000, help: false };
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--format') args.format = argv[++i] ?? 'text';
     else if (arg === '--fail-on') args.failOn = argv[++i] ?? null;
     else if (arg === '--max') args.max = Number(argv[++i] ?? 5000);
+    else if (arg === '--help' || arg === '-h') args.help = true;
     else if (!arg.startsWith('-')) args.target = arg;
   }
 
@@ -72,6 +87,12 @@ function* walkFiles(dir, limit, seen = { count: 0 }) {
 
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
+
+  if (args.help) {
+    process.stdout.write(USAGE);
+    return [];
+  }
+
   const target = path.resolve(args.target);
 
   const config = loadConfig(target);

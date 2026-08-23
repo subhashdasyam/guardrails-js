@@ -8,13 +8,27 @@
 import { walk } from '../../engine/walk.js';
 import { memberName, lastSegment, isCall } from '../helpers.js';
 
-const REQUEST_CONTEXT = /\b(req|res|request|reply|response|ctx|handler|route|middleware)\b/;
+const HANDLER_PARAM = /^(req|request|res|response|reply|ctx|context)$/;
 
+/**
+ * Is this call on the path that serves a request?
+ *
+ * An earlier version matched the words req or response anywhere in the
+ * enclosing function, which flagged plenty of code that merely talked about
+ * requests. This looks for an actual handler signature instead: a parameter
+ * named like one, or a body that writes to a response object.
+ */
 function inRequestPath(node, ctx) {
   const fn = ctx.functionFor(node);
-  if (!fn || fn.type === 'Program') return false;
+  if (!fn || fn.type === 'Program' || fn.type === 'File') return false;
+
+  const named = (fn.params ?? []).some(
+    (param) => param.type === 'Identifier' && HANDLER_PARAM.test(param.name),
+  );
+  if (named) return true;
+
   const body = ctx.source.slice(fn.start ?? 0, fn.end ?? 0);
-  return REQUEST_CONTEXT.test(body);
+  return /\b(res|reply|response)\.(send|json|end|write|status|render|sendFile)\s*\(/.test(body);
 }
 
 const FS_SYNC = /^(fs|fsSync|nodeFs)\./;
@@ -149,6 +163,18 @@ export const PERF_N07 = {
     if (first.type === 'ArrayExpression') return null;
     if (!isCall(first)) return null;
     if (lastSegment(memberName(first.callee) ?? '') !== 'map') return null;
+
+    // items.slice(0, 4).map(...) is already bounded, and so is take(n).
+    const receiver = first.callee?.object;
+    if (isCall(receiver)) {
+      const bounded = lastSegment(memberName(receiver.callee) ?? '');
+      if (['slice', 'splice', 'take', 'limit', 'chunk'].includes(bounded)) {
+        const hasNumericBound = (receiver.arguments ?? []).some(
+          (argument) => argument.type === 'NumericLiteral',
+        );
+        if (hasNumericBound) return null;
+      }
+    }
 
     if (LIMITER.test(ctx.source)) return null;
 

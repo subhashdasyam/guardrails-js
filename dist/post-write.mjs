@@ -18171,12 +18171,16 @@ var NUXT_ROUTE_RULES = {
 var vue_default = [XSS_03, VUE_URL, VUE_SSR, VITE_HOST, NUXT_ROUTE_RULES];
 
 // src/rules/perf-node/perf.js
-var REQUEST_CONTEXT = /\b(req|res|request|reply|response|ctx|handler|route|middleware)\b/;
+var HANDLER_PARAM = /^(req|request|res|response|reply|ctx|context)$/;
 function inRequestPath(node, ctx) {
   const fn = ctx.functionFor(node);
-  if (!fn || fn.type === "Program") return false;
+  if (!fn || fn.type === "Program" || fn.type === "File") return false;
+  const named = (fn.params ?? []).some(
+    (param) => param.type === "Identifier" && HANDLER_PARAM.test(param.name)
+  );
+  if (named) return true;
   const body = ctx.source.slice(fn.start ?? 0, fn.end ?? 0);
-  return REQUEST_CONTEXT.test(body);
+  return /\b(res|reply|response)\.(send|json|end|write|status|render|sendFile)\s*\(/.test(body);
 }
 var FS_SYNC = /^(fs|fsSync|nodeFs)\./;
 var PERF_N01 = {
@@ -18284,6 +18288,16 @@ var PERF_N07 = {
     if (first.type === "ArrayExpression") return null;
     if (!isCall(first)) return null;
     if (lastSegment(memberName(first.callee) ?? "") !== "map") return null;
+    const receiver = first.callee?.object;
+    if (isCall(receiver)) {
+      const bounded = lastSegment(memberName(receiver.callee) ?? "");
+      if (["slice", "splice", "take", "limit", "chunk"].includes(bounded)) {
+        const hasNumericBound = (receiver.arguments ?? []).some(
+          (argument) => argument.type === "NumericLiteral"
+        );
+        if (hasNumericBound) return null;
+      }
+    }
     if (LIMITER.test(ctx.source)) return null;
     return { node: first };
   },

@@ -41,7 +41,7 @@ jobs:
         run: npm run bench
 
       - name: Audit our own source
-        run: node dist/audit.mjs src --format text
+        run: node bin/guardrails-js src --format text --fail-on high
 
   hooks:
     runs-on: ubuntu-latest

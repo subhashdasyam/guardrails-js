@@ -27,6 +27,7 @@ function checkManifest(filePath, input) {
 
   let pkg;
   try {
+    // guardrails-js-ignore PATH-01 -- filePath is the file Claude Code just wrote, handed to us by the harness on stdin, and reading it back is the whole job. There is no root to contain it to.
     pkg = JSON.parse(fs.readFileSync(filePath, 'utf8'));
   } catch {
     return;
@@ -99,6 +100,7 @@ export function main() {
 
   let source;
   try {
+    // guardrails-js-ignore PATH-01 -- same as above: this is the file the harness told us Claude just wrote, and reading it back is the point of the hook.
     source = fs.readFileSync(filePath, 'utf8');
   } catch {
     return;

@@ -17724,12 +17724,16 @@ var NUXT_ROUTE_RULES = {
 var vue_default = [XSS_03, VUE_URL, VUE_SSR, VITE_HOST, NUXT_ROUTE_RULES];
 
 // src/rules/perf-node/perf.js
-var REQUEST_CONTEXT = /\b(req|res|request|reply|response|ctx|handler|route|middleware)\b/;
+var HANDLER_PARAM = /^(req|request|res|response|reply|ctx|context)$/;
 function inRequestPath(node, ctx) {
   const fn = ctx.functionFor(node);
-  if (!fn || fn.type === "Program") return false;
+  if (!fn || fn.type === "Program" || fn.type === "File") return false;
+  const named = (fn.params ?? []).some(
+    (param) => param.type === "Identifier" && HANDLER_PARAM.test(param.name)
+  );
+  if (named) return true;
   const body = ctx.source.slice(fn.start ?? 0, fn.end ?? 0);
-  return REQUEST_CONTEXT.test(body);
+  return /\b(res|reply|response)\.(send|json|end|write|status|render|sendFile)\s*\(/.test(body);
 }
 var FS_SYNC = /^(fs|fsSync|nodeFs)\./;
 var PERF_N01 = {
@@ -17837,6 +17841,16 @@ var PERF_N07 = {
     if (first.type === "ArrayExpression") return null;
     if (!isCall(first)) return null;
     if (lastSegment(memberName(first.callee) ?? "") !== "map") return null;
+    const receiver = first.callee?.object;
+    if (isCall(receiver)) {
+      const bounded = lastSegment(memberName(receiver.callee) ?? "");
+      if (["slice", "splice", "take", "limit", "chunk"].includes(bounded)) {
+        const hasNumericBound = (receiver.arguments ?? []).some(
+          (argument) => argument.type === "NumericLiteral"
+        );
+        if (hasNumericBound) return null;
+      }
+    }
     if (LIMITER.test(ctx.source)) return null;
     return { node: first };
   },
@@ -18411,13 +18425,27 @@ var SKIP_DIRS = /* @__PURE__ */ new Set([
   ".cache",
   "vendor"
 ]);
+var USAGE = `guardrails-js: scan JavaScript and TypeScript for insecure and slow patterns
+
+  guardrails-js [path] [options]
+
+  --format text|json   how to print the result, default text
+  --fail-on <severity> exit 1 when a finding at this level or above is present
+                       (critical, high, medium, low, perf)
+  --max <n>            stop after this many files, default 5000
+  --help               show this
+
+Findings map to OWASP Top 10:2025 and CWE. Rules that cannot be certain without
+reasoning across functions report at medium and below.
+`;
 function parseArgs(argv) {
-  const args = { target: ".", format: "text", failOn: null, max: 5e3 };
+  const args = { target: ".", format: "text", failOn: null, max: 5e3, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--format") args.format = argv[++i] ?? "text";
     else if (arg === "--fail-on") args.failOn = argv[++i] ?? null;
     else if (arg === "--max") args.max = Number(argv[++i] ?? 5e3);
+    else if (arg === "--help" || arg === "-h") args.help = true;
     else if (!arg.startsWith("-")) args.target = arg;
   }
   return args;
@@ -18445,6 +18473,10 @@ function* walkFiles(dir, limit, seen = { count: 0 }) {
 }
 function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
+  if (args.help) {
+    process.stdout.write(USAGE);
+    return [];
+  }
   const target = path5.resolve(args.target);
   const config = loadConfig(target);
   const { pkg, root } = readPackageJson(target);

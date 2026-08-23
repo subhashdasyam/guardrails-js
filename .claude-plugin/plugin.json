@@ -1,7 +1,7 @@
 {
   "name": "guardrails-js",
   "displayName": "guardrails-js",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Tells Claude when the JavaScript it wrote is unsafe or slow, so it fixes it in the same turn. Node only, no Python, no model calls.",
   "author": {
     "name": "Subhash Dasyam",

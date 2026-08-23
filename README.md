@@ -2,7 +2,7 @@
 
 A Claude Code plugin that tells Claude when the JavaScript it just wrote is unsafe or slow, so Claude fixes it in the same turn.
 
-**v0.5 works today**: 70 rules covering security and performance across Node, Express, Fastify, NestJS, React, Next.js, Vue, and Nuxt, plus dependency version checks, the npm install gate, session priming, and the repo audit command. The full design is in [docs/PLAN.md](docs/PLAN.md).
+**v1.0**: 70 rules covering security and performance across Node, Express, Fastify, NestJS, React, Next.js, Vue, and Nuxt, plus dependency version checks, the npm install gate, session priming, a repo audit command, and a CLI for CI. See the [changelog](CHANGELOG.md) and the [design notes](docs/PLAN.md).
 
 ## The problem
 
@@ -230,9 +230,14 @@ Measured on this machine: 34 ms for a clean file, 48 ms when a rule fires. Most 
 
 ## What is next
 
-| Version | What lands |
-|---|---|
-| v1.0 | Published to the marketplace |
+Nothing is promised. Things worth doing, roughly in order of how much they would help:
+
+- More rules for NestJS guards and tRPC procedures, where authorization is easy to leave out and hard to see.
+- A real Vue template parse, if the bundle cost stops mattering or the scanner starts missing things people hit.
+- Angular and Svelte, which share most of the same sinks under different names.
+- A wider popular package list so the install gate asks less often about real dependencies.
+
+If a rule fires on correct code, that is a bug worth reporting. The false positive corpus in `test/corpus/` exists precisely so those get fixed rather than tolerated.
 
 ## License
 

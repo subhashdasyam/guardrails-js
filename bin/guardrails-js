@@ -1,2 +1,5 @@
 #!/usr/bin/env node
-import('../dist/audit.mjs').catch((err) => { console.error(err); process.exit(1); });
+// Built by scripts/build.mjs. Do not edit.
+import { main } from '../dist/audit.mjs';
+
+main(process.argv.slice(2));

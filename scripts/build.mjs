@@ -53,8 +53,19 @@ async function run() {
   }
   fs.chmodSync(auditFile, 0o755);
 
+  // bin/ is added to the Bash tool PATH by Claude Code, so this is how the
+  // audit runs headless. It calls main directly: the bundle only self starts
+  // when argv[1] is the bundle itself, which it is not when invoked through
+  // this shim.
   fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
-  const shim = `#!/usr/bin/env node\nimport('${'../dist/audit.mjs'}').catch((err) => { console.error(err); process.exit(1); });\n`;
+  const shim = [
+    '#!/usr/bin/env node',
+    "// Built by scripts/build.mjs. Do not edit.",
+    "import { main } from '../dist/audit.mjs';",
+    '',
+    'main(process.argv.slice(2));',
+    '',
+  ].join('\n');
   fs.writeFileSync(path.join(root, 'bin/guardrails-js'), shim, 'utf8');
   fs.chmodSync(path.join(root, 'bin/guardrails-js'), 0o755);
 }
