@@ -215,6 +215,53 @@ check('audit returns json and a non zero exit when told to fail', () => {
   assert.equal(result.status, 1);
 });
 
+// A project whose only finding is a performance note. Nothing here should ever
+// break a build: performance is advice, and whether it matters depends on data
+// the analyzer cannot see.
+const perfOnly = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrails-perf-'));
+fs.writeFileSync(
+  path.join(perfOnly, 'package.json'),
+  JSON.stringify({ name: 'p', version: '1.0.0', scripts: { verify: 'npm audit signatures' } }),
+);
+fs.writeFileSync(
+  path.join(perfOnly, 'package-lock.json'),
+  JSON.stringify({ name: 'p', lockfileVersion: 3, packages: {} }),
+);
+fs.writeFileSync(path.join(perfOnly, '.npmrc'), 'ignore-scripts=true\n');
+fs.writeFileSync(
+  path.join(perfOnly, 'slow.js'),
+  'items.forEach(async (item) => { await save(item); });\n',
+);
+
+function audit(args) {
+  const result = spawnSync(process.execPath, [path.join(dist, 'audit.mjs'), ...args], {
+    encoding: 'utf8',
+  });
+  return { code: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+}
+
+check('the performance finding is reported by default', () => {
+  const out = audit([perfOnly, '--format', 'json']);
+  const payload = JSON.parse(out.stdout);
+  assert.ok(
+    payload.findings.some((finding) => finding.ruleId === 'PERF-N10'),
+    'performance reports without anyone switching it on',
+  );
+});
+
+for (const level of ['low', 'medium', 'high', 'critical']) {
+  check(`a performance finding never fails a build at --fail-on ${level}`, () => {
+    assert.equal(audit([perfOnly, '--fail-on', level]).code, 0);
+  });
+}
+
+check('--fail-on perf is rejected rather than quietly breaking builds', () => {
+  const out = audit([perfOnly, '--fail-on', 'perf']);
+  assert.equal(out.code, 2);
+  assert.match(out.stderr, /never fail a build/);
+});
+
+fs.rmSync(perfOnly, { recursive: true, force: true });
 fs.rmSync(project, { recursive: true, force: true });
 
 console.log(`\n${passed} passed, ${failed} failed`);

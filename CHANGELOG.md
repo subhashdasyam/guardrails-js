@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.1
+
+Finishes separating performance findings from security findings.
+
+Reporting was already decoupled in 1.2.0. One place was not: `--fail-on perf` in
+the CLI would break a build over a note about an N+1 query. Performance findings
+now never fail a build at any level, and `--fail-on perf` is rejected with a
+reason rather than accepted and quietly doing the wrong thing.
+
+Performance reports by default and no security setting can hide it. Tests cover
+both: a performance finding is reported at every security floor, and a project
+whose only finding is a performance note passes `--fail-on` at low, medium,
+high, and critical.
+
 ## 1.2.0
 
 Nothing in the install prompt asks you to type a value any more, and one setting no longer switches off another.

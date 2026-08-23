@@ -5,7 +5,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { loadConfig, isExcluded, meetsMinSeverity, SEVERITY_ORDER } from '../engine/config.js';
+import {
+  loadConfig,
+  isExcluded,
+  meetsMinSeverity,
+  SEVERITY_ORDER,
+  SECURITY_SEVERITIES,
+} from '../engine/config.js';
 import { analyze } from '../engine/analyze.js';
 import { SUPPORTED_EXTENSIONS } from '../engine/parse.js';
 import { RULES } from '../rules/index.js';
@@ -36,8 +42,9 @@ const USAGE = `guardrails-js: scan JavaScript and TypeScript for insecure and sl
   guardrails-js [path] [options]
 
   --format text|json   how to print the result, default text
-  --fail-on <severity> exit 1 when a finding at this level or above is present
-                       (critical, high, medium, low, perf)
+  --fail-on <severity> exit 1 when a security finding at this level or above is
+                       present (critical, high, medium, low). Performance
+                       findings never fail a build
   --max <n>            stop after this many files, default 5000
   --help               show this
 
@@ -199,7 +206,21 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   if (args.failOn) {
-    const failing = all.filter((finding) => meetsMinSeverity(finding.severity, args.failOn));
+    if (!SECURITY_SEVERITIES.includes(args.failOn)) {
+      process.stderr.write(
+        `guardrails-js: --fail-on takes one of ${SECURITY_SEVERITIES.join(', ')}, ` +
+          `not "${args.failOn}". Performance findings never fail a build, because they are\n` +
+          'advice rather than defects and whether they matter depends on data this cannot see.\n',
+      );
+      process.exit(2);
+    }
+
+    // Performance is not on the severity scale. A build must never break over a
+    // note about an N+1 query.
+    const failing = all.filter(
+      (finding) =>
+        finding.severity !== 'perf' && meetsMinSeverity(finding.severity, args.failOn),
+    );
     if (failing.length > 0) process.exit(1);
   }
 

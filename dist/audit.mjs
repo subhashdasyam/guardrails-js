@@ -19149,8 +19149,9 @@ var USAGE = `guardrails-js: scan JavaScript and TypeScript for insecure and slow
   guardrails-js [path] [options]
 
   --format text|json   how to print the result, default text
-  --fail-on <severity> exit 1 when a finding at this level or above is present
-                       (critical, high, medium, low, perf)
+  --fail-on <severity> exit 1 when a security finding at this level or above is
+                       present (critical, high, medium, low). Performance
+                       findings never fail a build
   --max <n>            stop after this many files, default 5000
   --help               show this
 
@@ -19284,7 +19285,17 @@ function main(argv = process.argv.slice(2)) {
 `);
   }
   if (args.failOn) {
-    const failing = all.filter((finding) => meetsMinSeverity(finding.severity, args.failOn));
+    if (!SECURITY_SEVERITIES.includes(args.failOn)) {
+      process.stderr.write(
+        `guardrails-js: --fail-on takes one of ${SECURITY_SEVERITIES.join(", ")}, not "${args.failOn}". Performance findings never fail a build, because they are
+advice rather than defects and whether they matter depends on data this cannot see.
+`
+      );
+      process.exit(2);
+    }
+    const failing = all.filter(
+      (finding) => finding.severity !== "perf" && meetsMinSeverity(finding.severity, args.failOn)
+    );
     if (failing.length > 0) process.exit(1);
   }
   return all;

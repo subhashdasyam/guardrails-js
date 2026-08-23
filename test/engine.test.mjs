@@ -134,6 +134,20 @@ test('the severity floor cannot hide the performance pack', async () => {
   );
 });
 
+test('no security floor can hide a performance finding', async () => {
+  const { shouldReport, loadConfig: load, SECURITY_SEVERITIES } = await import(
+    '../src/engine/config.js'
+  );
+  const base = load('/nonexistent-so-defaults-apply');
+
+  for (const floor of SECURITY_SEVERITIES) {
+    assert.ok(
+      shouldReport('perf', { ...base, minSeverity: floor }),
+      `minSeverity ${floor} must not affect performance findings, they are not on that scale`,
+    );
+  }
+});
+
 test('an unusable severity floor falls back instead of hiding everything', async () => {
   const { loadConfig: load } = await import('../src/engine/config.js');
   process.env.CLAUDE_PLUGIN_OPTION_MIN_SEVERITY = 'medum';
