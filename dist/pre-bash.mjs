@@ -225,7 +225,9 @@ var DEFAULTS = {
   primingPacks: ["auto"],
   priming: true,
   modelEscalation: false,
-  minSeverity: "low"
+  // Everything by default. Performance findings sit below low, so a default of
+  // "low" would have silently hidden the whole performance pack.
+  minSeverity: "perf"
 };
 function readJson(file) {
   try {

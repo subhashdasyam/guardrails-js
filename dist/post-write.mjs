@@ -14788,7 +14788,9 @@ var DEFAULTS = {
   primingPacks: ["auto"],
   priming: true,
   modelEscalation: false,
-  minSeverity: "low"
+  // Everything by default. Performance findings sit below low, so a default of
+  // "low" would have silently hidden the whole performance pack.
+  minSeverity: "perf"
 };
 function readJson(file) {
   try {
@@ -15607,6 +15609,7 @@ function analyze(options) {
     if (FUNCTION_TYPES2.has(node.type) && typeof node.start === "number") functions.push(node);
     return void 0;
   });
+  const programNode = ast.program ?? ast;
   const functionFor = (node) => {
     let best = null;
     for (const fn of functions) {
@@ -15614,7 +15617,7 @@ function analyze(options) {
         if (best === null || fn.end - fn.start < best.end - best.start) best = fn;
       }
     }
-    return best ?? ast;
+    return best ?? programNode;
   };
   const changed = wholeFile ? null : changedRangeFromToolInput(toolName, toolInput, source);
   const window = wholeFile ? null : reportWindow(ast, changed, source.length);
@@ -18167,13 +18170,399 @@ var NUXT_ROUTE_RULES = {
 };
 var vue_default = [XSS_03, VUE_URL, VUE_SSR, VITE_HOST, NUXT_ROUTE_RULES];
 
+// src/rules/perf-node/perf.js
+var REQUEST_CONTEXT = /\b(req|res|request|reply|response|ctx|handler|route|middleware)\b/;
+function inRequestPath(node, ctx) {
+  const fn = ctx.functionFor(node);
+  if (!fn || fn.type === "Program") return false;
+  const body = ctx.source.slice(fn.start ?? 0, fn.end ?? 0);
+  return REQUEST_CONTEXT.test(body);
+}
+var FS_SYNC = /^(fs|fsSync|nodeFs)\./;
+var PERF_N01 = {
+  id: "PERF-N01",
+  title: "Synchronous file access in a request handler",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-400"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /Sync\s*\(/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    const method = lastSegment(full);
+    if (!method.endsWith("Sync")) return null;
+    if (!FS_SYNC.test(full)) return null;
+    if (!inRequestPath(node, ctx)) return null;
+    return { node, call: full };
+  },
+  message: (f) => `${f.call} blocks the event loop, and in a request handler that means every other request waits behind this one. Node runs your JavaScript on a single thread.`,
+  fix: "const data = await fs.promises.readFile(file, 'utf8');  // or createReadStream().pipe(res) for large files"
+};
+var BLOCKING_SYNC = [
+  "pbkdf2Sync",
+  "scryptSync",
+  "hashSync",
+  "compareSync",
+  "gzipSync",
+  "gunzipSync",
+  "deflateSync",
+  "inflateSync",
+  "brotliCompressSync",
+  "brotliDecompressSync",
+  "execSync",
+  "spawnSync"
+];
+var PERF_N02 = {
+  id: "PERF-N02",
+  title: "Expensive synchronous call in a request handler",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-400"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /(pbkdf2|scrypt|hash|compare|gzip|gunzip|deflate|inflate|brotli|exec|spawn)Sync\s*\(/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    const method = lastSegment(full);
+    if (!BLOCKING_SYNC.includes(method)) return null;
+    if (!inRequestPath(node, ctx)) return null;
+    return { node, call: method };
+  },
+  message: (f) => `${f.call} runs on the main thread. Password hashing and compression are meant to be slow, so this stalls every other request for as long as it takes.`,
+  fix: "await bcrypt.compare(password, hash);  // the async form uses the thread pool"
+};
+var DB_CALL = /\b(find|findOne|findMany|findUnique|findFirst|query|select|insert|update|delete|get|fetch|aggregate|count)\b/i;
+function awaitedCallInside(node) {
+  let found = null;
+  walk(node, (child) => {
+    if (found) return false;
+    if (child !== node && ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(child.type)) {
+      return false;
+    }
+    if (child.type === "AwaitExpression" && isCall(child.argument)) found = child.argument;
+    return void 0;
+  });
+  return found;
+}
+var PERF_N06 = {
+  id: "PERF-N06",
+  title: "Awaiting one at a time in a loop",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-400"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /await/,
+  nodeTypes: ["ForOfStatement", "ForStatement", "ForInStatement", "WhileStatement"],
+  match(node, ctx) {
+    const call = awaitedCallInside(node.body);
+    if (!call) return null;
+    const name = memberName(call.callee) ?? "";
+    if (DB_CALL.test(lastSegment(name) ?? "")) return null;
+    return { node: call, call: name || "an async call" };
+  },
+  message: (f) => `${f.call} is awaited once per iteration, so the total time is the sum of every call. If these do not depend on each other, run them together.`,
+  fix: "const results = await Promise.all(ids.map((id) => fetchOne(id)));\n// with a limiter when the list can be large: pLimit(10)"
+};
+var LIMITER = /p-limit|pLimit|pMap|p-map|Bottleneck|Semaphore|concurrency|PQueue|p-queue/;
+var PERF_N07 = {
+  id: "PERF-N07",
+  title: "Unbounded parallel fan out",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-400", "CWE-770"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /Promise\.all|Promise\.allSettled/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (full !== "Promise.all" && full !== "Promise.allSettled") return null;
+    const first = node.arguments[0];
+    if (!first) return null;
+    if (first.type === "ArrayExpression") return null;
+    if (!isCall(first)) return null;
+    if (lastSegment(memberName(first.callee) ?? "") !== "map") return null;
+    if (LIMITER.test(ctx.source)) return null;
+    return { node: first };
+  },
+  message: () => "Promise.all over a mapped collection starts every task at once. With a thousand rows that is a thousand open sockets or database connections, and the failure looks like a memory problem rather than a concurrency one.",
+  fix: "const limit = pLimit(10);\nawait Promise.all(items.map((item) => limit(() => process(item))));"
+};
+var PERF_N08 = {
+  id: "PERF-N08",
+  title: "Stream write with the result thrown away",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-400"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /\.write\s*\(/,
+  nodeTypes: ["ForOfStatement", "ForStatement", "WhileStatement"],
+  match(node, ctx) {
+    let write = null;
+    walk(node.body, (child) => {
+      if (write) return false;
+      if (child.type !== "ExpressionStatement") return void 0;
+      const expression = child.expression;
+      if (!isCall(expression)) return void 0;
+      const name = memberName(expression.callee);
+      if (!name || lastSegment(name) !== "write") return void 0;
+      if (/^(res|reply|response)\./.test(name)) return void 0;
+      write = expression;
+      return void 0;
+    });
+    if (!write) return null;
+    const scope = ctx.source.slice(node.start, node.end);
+    if (/drain|pipeline|\.pipe\(/.test(scope)) return null;
+    return { node: write };
+  },
+  message: () => "write returns false when the buffer is full, and this loop ignores it. The data keeps piling up in memory instead of waiting for the stream to catch up.",
+  fix: "await pipeline(source, destination);  // or: if (!stream.write(chunk)) await once(stream, 'drain');"
+};
+var PERF_N10 = {
+  id: "PERF-N10",
+  title: "Async callback passed to forEach",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-252"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /forEach\s*\(\s*async/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node) {
+    const full = memberName(node.callee);
+    if (!full || lastSegment(full) !== "forEach") return null;
+    const callback = node.arguments[0];
+    if (!callback?.async) return null;
+    return { node: callback };
+  },
+  message: () => "forEach ignores the promise its callback returns, so nothing waits for this work and a rejection becomes an unhandled rejection.",
+  fix: "for (const item of items) await process(item);\n// or, to run them together: await Promise.all(items.map(process));"
+};
+var EVICTION = /\.delete\(|\.clear\(|LRU|lru|maxSize|max:|ttl|TTL|expire|evict/;
+var PERF_N12 = {
+  id: "PERF-N12",
+  title: "Cache that never evicts anything",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-400", "CWE-770"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /new Map\(|new Set\(/,
+  nodeTypes: ["VariableDeclarator"],
+  match(node, ctx, parent) {
+    if (node.id?.type !== "Identifier") return null;
+    const init = node.init;
+    if (!init || init.type !== "NewExpression") return null;
+    const built = memberName(init.callee);
+    if (built !== "Map" && built !== "Set") return null;
+    const fn = ctx.functionFor(node);
+    if (fn && fn.type !== "Program") return null;
+    const name = node.id.name;
+    const writes = new RegExp(`\\b${name}\\.(set|add)\\s*\\(`).test(ctx.source);
+    if (!writes) return null;
+    if (EVICTION.test(ctx.source)) return null;
+    if (!/cache|store|registry|seen|memo|index|lookup|pool/i.test(name)) return null;
+    return { node, name };
+  },
+  message: (f) => `${f.name} lives for the life of the process, gets written to, and nothing ever removes from it. If the keys come from requests, that is a slow memory leak with an attacker holding the tap.`,
+  fix: "Use an LRU with a size cap, or set a TTL and sweep. Bound it by something you control."
+};
+var PERF_N17 = {
+  id: "PERF-N17",
+  title: "Database call inside a loop",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-400"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /for\s*\(|\.map\s*\(/,
+  nodeTypes: ["ForOfStatement", "ForStatement", "ForInStatement", "CallExpression"],
+  match(node, ctx) {
+    let call = null;
+    if (node.type === "CallExpression") {
+      const full = memberName(node.callee);
+      if (!full || lastSegment(full) !== "map") return null;
+      const callback = node.arguments[0];
+      if (!callback?.async) return null;
+      call = awaitedCallInside(callback.body);
+    } else {
+      call = awaitedCallInside(node.body);
+    }
+    if (!call) return null;
+    const name = memberName(call.callee) ?? "";
+    const method = lastSegment(name) ?? "";
+    if (!DB_CALL.test(method)) return null;
+    if (!/db|prisma|model|repo|collection|knex|sequelize|query|find|table/i.test(name)) return null;
+    return { node: call, call: name };
+  },
+  message: (f) => `${f.call} runs once per item. A hundred rows means a hundred round trips, and the query that looked fast in development is the one that falls over with real data.`,
+  fix: "const rows = await db.user.findMany({ where: { id: { in: ids } } });\n// then join in memory, one query instead of many"
+};
+var perf_default = [PERF_N01, PERF_N02, PERF_N06, PERF_N07, PERF_N08, PERF_N10, PERF_N12, PERF_N17];
+
+// src/rules/perf-react/perf.js
+var REACT_04 = {
+  id: "REACT-04",
+  title: "New object or function passed to a memoized child",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-400"],
+  languages: ["jsx", "tsx"],
+  prefilter: /\bmemo\s*\(|React\.memo/,
+  nodeTypes: ["JSXOpeningElement"],
+  match(node, ctx) {
+    const name = node.name?.name;
+    if (typeof name !== "string" || !/^[A-Z]/.test(name)) return null;
+    if (!/\bmemo\s*\(|React\.memo/.test(ctx.source)) return null;
+    for (const attribute of node.attributes ?? []) {
+      if (attribute.type !== "JSXAttribute") continue;
+      const value = attribute.value;
+      if (value?.type !== "JSXExpressionContainer") continue;
+      const expression = value.expression;
+      const isFresh = expression?.type === "ObjectExpression" || expression?.type === "ArrayExpression" || expression?.type === "ArrowFunctionExpression" || expression?.type === "FunctionExpression";
+      if (!isFresh) continue;
+      return { node: attribute, component: name, prop: attribute.name?.name };
+    }
+    return null;
+  },
+  message: (f) => `${f.component} gets a brand new ${f.prop} on every render. memo compares props by identity, so a fresh object or arrow function makes it re-render every time and the memo does nothing.`,
+  fix: "const options = useMemo(() => ({ mode, limit }), [mode, limit]);\nconst onClick = useCallback(() => go(id), [id]);"
+};
+var REACT_05 = {
+  id: "REACT-05",
+  title: "List key is the array index",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-400"],
+  languages: ["jsx", "tsx"],
+  prefilter: /\.map\s*\(/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full || lastSegment(full) !== "map") return null;
+    const callback = node.arguments[0];
+    if (!callback || !["ArrowFunctionExpression", "FunctionExpression"].includes(callback.type)) {
+      return null;
+    }
+    const indexParam = callback.params[1];
+    const indexName = indexParam?.type === "Identifier" ? indexParam.name : null;
+    let problem = null;
+    walk(callback.body, (child) => {
+      if (problem) return false;
+      if (child.type !== "JSXElement") return void 0;
+      const opening = child.openingElement;
+      const keyAttribute = (opening?.attributes ?? []).find(
+        (attribute) => attribute.type === "JSXAttribute" && attribute.name?.name === "key"
+      );
+      if (!keyAttribute) {
+        problem = { node: opening ?? child, kind: "no key at all" };
+        return false;
+      }
+      const value = keyAttribute.value;
+      if (value?.type === "JSXExpressionContainer") {
+        const text = ctx.source.slice(value.expression.start, value.expression.end).trim();
+        if (indexName && text === indexName) {
+          problem = { node: keyAttribute, kind: "the array index as the key" };
+        } else if (/Math\.random|Date\.now/.test(text)) {
+          problem = { node: keyAttribute, kind: "a random key, which changes every render" };
+        }
+      }
+      return false;
+    });
+    return problem;
+  },
+  message: (f) => `This list has ${f.kind}. React matches items by key, so when the list reorders or an item is removed it reuses the wrong DOM node, and typed input ends up on the wrong row.`,
+  fix: "{items.map((item) => <Row key={item.id} item={item} />)}"
+};
+var SETTER = /^set[A-Z]/;
+var REACT_07 = {
+  id: "REACT-07",
+  title: "Derived value computed in an effect",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-400"],
+  languages: ["jsx", "tsx", "js", "ts"],
+  prefilter: /useEffect/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full || lastSegment(full) !== "useEffect") return null;
+    const callback = node.arguments[0];
+    if (!callback || !["ArrowFunctionExpression", "FunctionExpression"].includes(callback.type)) {
+      return null;
+    }
+    const body = callback.body;
+    if (body?.type !== "BlockStatement") return null;
+    const statements = body.body.filter((statement) => statement.type !== "EmptyStatement");
+    if (statements.length !== 1) return null;
+    const only = statements[0];
+    if (only.type !== "ExpressionStatement" || !isCall(only.expression)) return null;
+    const setter = memberName(only.expression.callee);
+    if (!setter || !SETTER.test(lastSegment(setter) ?? "")) return null;
+    const argument = only.expression.arguments[0];
+    if (!argument) return null;
+    const argumentText = ctx.source.slice(argument.start, argument.end);
+    if (/await|fetch\(|axios|subscribe|addEventListener|\.then\(/.test(argumentText)) return null;
+    return { node: only, setter: lastSegment(setter) };
+  },
+  message: (f) => `${f.setter} is called from an effect with a value worked out from props and state. That renders once with the old value, then again with the new one, and chains of these are how render loops start.`,
+  fix: "const total = items.reduce((sum, item) => sum + item.price, 0);  // just compute it during render"
+};
+var VUE_04 = {
+  id: "VUE-04",
+  title: "v-for and v-if on the same element",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-400"],
+  languages: ["vue"],
+  target: "template",
+  prefilter: /v-for/,
+  matchTemplate(element) {
+    const hasFor = element.attributes.some((attribute) => attribute.name.startsWith("v-for"));
+    if (!hasFor) return null;
+    const conditional = element.attributes.find(
+      (attribute) => attribute.name === "v-if" || attribute.name === "v-else-if"
+    );
+    if (!conditional) return null;
+    return { offset: conditional.nameStart, tag: element.tagName };
+  },
+  message: (f) => `<${f.tag}> has both v-for and v-if. In Vue 3 the condition runs for every item, and it cannot see the loop variable, so this is usually both slower and not what was meant.`,
+  fix: 'const visible = computed(() => items.value.filter((item) => item.visible));\n<li v-for="item in visible" :key="item.id">'
+};
+var VUE_07 = {
+  id: "VUE-07",
+  title: "v-for with no key",
+  severity: "perf",
+  owasp2025: "A10",
+  cwe: ["CWE-400"],
+  languages: ["vue"],
+  target: "template",
+  prefilter: /v-for/,
+  matchTemplate(element) {
+    const loop = element.attributes.find((attribute) => attribute.name.startsWith("v-for"));
+    if (!loop) return null;
+    const key = element.attributes.find(
+      (attribute) => attribute.name === ":key" || attribute.name === "v-bind:key" || attribute.name === "key"
+    );
+    if (!key) return { offset: loop.nameStart, tag: element.tagName, kind: "no key" };
+    if (key.value && /^\s*(index|i|idx)\s*$/.test(key.value)) {
+      return { offset: key.nameStart, tag: element.tagName, kind: "the loop index as the key" };
+    }
+    return null;
+  },
+  message: (f) => `<${f.tag}> is repeated with v-for and has ${f.kind}. Vue reuses elements by key, so without a stable one it patches the wrong node and component state lands on the wrong row.`,
+  fix: '<li v-for="item in items" :key="item.id">'
+};
+var perf_default2 = [REACT_04, REACT_05, REACT_07, VUE_04, VUE_07];
+
 // src/rules/index.js
 var PACKS = {
   "node-core": [...injection_default, ...ssrf_default, ...deserialization_default, ...secrets_config_default, ...prototype_pollution_default],
   "node-auth": [...auth_default, ...access_default],
   "node-dos": [...limits_default],
   react: [...xss_default, ...next_default],
-  vue: [...vue_default]
+  vue: [...vue_default],
+  "perf-node": [...perf_default],
+  "perf-frontend": [...perf_default2]
 };
 var RULES = Object.values(PACKS).flat();
 var RULES_BY_ID = new Map(RULES.map((rule) => [rule.id, rule]));

@@ -9,6 +9,8 @@ import limits from './node-dos/limits.js';
 import xss from './react/xss.js';
 import nextRules from './react/next.js';
 import vueRules from './vue/vue.js';
+import perfNode from './perf-node/perf.js';
+import perfFrontend from './perf-react/perf.js';
 
 export const PACKS = {
   'node-core': [...injection, ...ssrf, ...deserialization, ...secretsConfig, ...prototypePollution],
@@ -16,6 +18,8 @@ export const PACKS = {
   'node-dos': [...limits],
   react: [...xss, ...nextRules],
   vue: [...vueRules],
+  'perf-node': [...perfNode],
+  'perf-frontend': [...perfFrontend],
 };
 
 export const RULES = Object.values(PACKS).flat();

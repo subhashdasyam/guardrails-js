@@ -10,8 +10,9 @@ import nodeDos from './cases/node-dos.js';
 import prototypePollution from './cases/prototype-pollution.js';
 import react from './cases/react.js';
 import vue from './cases/vue.js';
+import perf from './cases/perf.js';
 
-const cases = [...nodeCore, ...nodeAuth, ...nodeDos, ...prototypePollution, ...react, ...vue];
+const cases = [...nodeCore, ...nodeAuth, ...nodeDos, ...prototypePollution, ...react, ...vue, ...perf];
 
 const config = loadConfig('/nonexistent-so-defaults-apply');
 

@@ -95,6 +95,11 @@ export function analyze(options) {
     return undefined;
   });
 
+  // Babel hands back a File node wrapping the Program. Rules that ask "is this
+  // at module scope" compare against Program, so fall back to that and not to
+  // the File wrapper.
+  const programNode = ast.program ?? ast;
+
   const functionFor = (node) => {
     let best = null;
     for (const fn of functions) {
@@ -102,7 +107,7 @@ export function analyze(options) {
         if (best === null || fn.end - fn.start < best.end - best.start) best = fn;
       }
     }
-    return best ?? ast;
+    return best ?? programNode;
   };
 
   const changed = wholeFile

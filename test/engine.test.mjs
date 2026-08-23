@@ -65,6 +65,60 @@ test('vue script extraction keeps line numbers', () => {
   assert.ok(!code.includes('template'));
 });
 
+test('module scope is reported as Program, not the Babel File wrapper', () => {
+  // Babel wraps Program in a File node. Rules that ask "is this at module
+  // scope" compare against Program, so the fallback has to be the Program.
+  const moduleLevel = `const responseCache = new Map();
+    export function remember(key, value) {
+      responseCache.set(key, value);
+    }`;
+
+  const insideFunction = `export function build() {
+      const responseCache = new Map();
+      responseCache.set('a', 1);
+      return responseCache;
+    }`;
+
+  const fired = (code) =>
+    analyze({ source: code, filePath: 'a.js', config, rules: RULES, wholeFile: true }).findings.map(
+      (finding) => finding.ruleId,
+    );
+
+  assert.ok(fired(moduleLevel).includes('PERF-N12'), 'a module level cache is flagged');
+  assert.ok(
+    !fired(insideFunction).includes('PERF-N12'),
+    'a cache inside a function dies with the call and is not a leak',
+  );
+});
+
+test('performance findings stay on the quiet channel', async () => {
+  const { splitBySeverity } = await import('../src/engine/report.js');
+
+  const { findings } = analyze({
+    source: 'items.forEach(async (item) => { await save(item); });',
+    filePath: 'a.js',
+    config,
+    rules: RULES,
+    wholeFile: true,
+  });
+
+  const perf = findings.filter((finding) => finding.ruleId === 'PERF-N10');
+  assert.equal(perf.length, 1);
+  assert.equal(perf[0].severity, 'perf');
+
+  const { loud, quiet } = splitBySeverity(perf);
+  assert.equal(loud.length, 0, 'performance advice must never interrupt');
+  assert.equal(quiet.length, 1);
+});
+
+test('the default severity floor does not hide the performance pack', () => {
+  assert.equal(
+    config.minSeverity,
+    'perf',
+    'perf sits below low, so a floor of low would silently drop every performance rule',
+  );
+});
+
 test('vue template scanning', async () => {
   const { scanTemplate, extractTemplateBlock, bindingName } = await import(
     '../src/engine/vue-template.js'

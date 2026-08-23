@@ -2,7 +2,7 @@
 
 A Claude Code plugin that tells Claude when the JavaScript it just wrote is unsafe or slow, so Claude fixes it in the same turn.
 
-**v0.4 works today**: 57 rules covering Node, Express, Fastify, NestJS, React, Next.js, Vue, and Nuxt, plus dependency version checks, the npm install gate, session priming, and the repo audit command. The performance pack is next. The full design is in [docs/PLAN.md](docs/PLAN.md).
+**v0.5 works today**: 70 rules covering security and performance across Node, Express, Fastify, NestJS, React, Next.js, Vue, and Nuxt, plus dependency version checks, the npm install gate, session priming, and the repo audit command. The full design is in [docs/PLAN.md](docs/PLAN.md).
 
 ## The problem
 
@@ -73,7 +73,7 @@ They use different hooks and do not fight each other. Run both.
 
 ## What it checks today
 
-57 rules, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
+70 rules, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
 
 Injection and interpreters, A05:
 
@@ -153,6 +153,24 @@ Dependency versions, A03. Some problems are not in your code at all, so these re
 | NUXT-VER | Nuxt dev server disclosure and the 2026 server island fixes |
 | VITE-VER | Vite dev server arbitrary file read (CVE-2025-30208, CVE-2025-31125) |
 
+Performance. These always report on the quiet channel and never interrupt, because whether they matter depends on data the analyzer cannot see:
+
+| Rule | What it catches |
+|---|---|
+| PERF-N01, PERF-N02 | Synchronous file, crypto, and compression calls in a request handler |
+| PERF-N06 | Awaiting one at a time in a loop when the calls are independent |
+| PERF-N07 | `Promise.all` over a mapped collection with no concurrency limit |
+| PERF-N08 | Stream writes that ignore the return value, so backpressure is lost |
+| PERF-N10 | An async callback handed to `forEach`, which nothing waits for |
+| PERF-N12 | A process wide cache that nothing ever evicts from |
+| PERF-N17 | A database call inside a loop, which is the N+1 query |
+| REACT-04 | A fresh object or arrow function passed to a memoized child, defeating the memo |
+| REACT-05 | The array index or a random value used as a list key |
+| REACT-07 | Derived state computed inside `useEffect` instead of during render |
+| VUE-04, VUE-07 | `v-for` with `v-if` on the same element, and `v-for` with no stable key |
+
+There is deliberately no rule for missing `useMemo`. React's own documentation says memoization is an optimization and not a semantic guarantee, so linting for its absence produces noise and teaches people to wrap everything, which is slower and harder to read.
+
 Version checks read the lockfile when there is one, because that is the version you actually installed. With no lockfile they fall back to the lowest version the range allows and drop a severity level, since a range such as `^15.1.0` may already resolve to something patched.
 
 Vue single file components are handled in two halves. The `<script>` block is parsed properly, with byte offsets preserved so line numbers need no mapping. The `<template>` block goes through a small attribute scanner rather than the real Vue compiler, which keeps the bundle less than half the size it would otherwise be. The scanner handles nesting, quoted values, comments, and shorthand bindings, and it does not handle dynamic attribute names such as `:[key]`. Those come out as no match rather than a wrong match, so the failure direction is a missed finding and never a false one.
@@ -199,7 +217,7 @@ Nothing else ever leaves your machine. File contents are never sent anywhere.
 
 ```bash
 npm ci --ignore-scripts
-npm test              # 240 rule, engine, and dependency tests
+npm test              # 282 rule, engine, and dependency tests
 npm run build         # rebuild dist/, which is committed
 npm run check:dist    # fail if the committed bundle is stale
 npm run bench         # latency budget
@@ -214,7 +232,6 @@ Measured on this machine: 34 ms for a clean file, 48 ms when a rule fires. Most 
 
 | Version | What lands |
 |---|---|
-| v0.5 | Performance rules |
 | v1.0 | Published to the marketplace |
 
 ## License
