@@ -306,7 +306,7 @@ Version checks read the lockfile when there is one, because that is the version 
 <details>
 <summary><b>🐌 Performance traps</b></summary>
 
-These always report on the quiet channel and never interrupt, because whether they matter depends on data the analyzer cannot see.
+**These are not on the security severity scale, and no security setting can switch them off.** They report by default, always arrive on the quiet channel, never interrupt, and never fail a CI build, because whether they matter depends on data the analyzer cannot see.
 
 | Rule | What it catches |
 |---|---|
