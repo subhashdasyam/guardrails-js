@@ -1,0 +1,45 @@
+{
+  "name": "guardrails-js",
+  "displayName": "guardrails-js",
+  "version": "0.1.0",
+  "description": "Tells Claude when the JavaScript it wrote is unsafe or slow, so it fixes it in the same turn. Node only, no Python, no model calls.",
+  "author": {
+    "name": "Subhash Dasyam",
+    "url": "https://github.com/subhashdasyam"
+  },
+  "homepage": "https://github.com/subhashdasyam/guardrails-js",
+  "repository": "https://github.com/subhashdasyam/guardrails-js",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "owasp",
+    "node",
+    "react",
+    "vue",
+    "npm",
+    "performance"
+  ],
+  "hooks": "./hooks/hooks.json",
+  "commands": ["./commands"],
+  "skills": ["./skills"],
+  "userConfig": {
+    "network": {
+      "type": "boolean",
+      "title": "Look up packages online",
+      "description": "Ask osv.dev and the npm registry about packages before install. Sends package names off your machine. Offline checks still run when this is off.",
+      "default": true
+    },
+    "min_severity": {
+      "type": "string",
+      "title": "Lowest severity to report",
+      "description": "One of critical, high, medium, low, perf.",
+      "default": "low"
+    },
+    "priming": {
+      "type": "boolean",
+      "title": "Send rules at session start",
+      "description": "Give Claude a short rule set for your stack when a session starts.",
+      "default": true
+    }
+  }
+}

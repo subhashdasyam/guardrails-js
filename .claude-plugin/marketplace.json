@@ -1,0 +1,17 @@
+{
+  "name": "guardrails-js",
+  "owner": {
+    "name": "Subhash Dasyam",
+    "url": "https://github.com/subhashdasyam"
+  },
+  "description": "Secure coding and performance guardrails for Node, React, and Vue in Claude Code.",
+  "plugins": [
+    {
+      "name": "guardrails-js",
+      "description": "Tells Claude when the JavaScript it wrote is unsafe or slow, so it fixes it in the same turn.",
+      "source": "./",
+      "category": "security",
+      "keywords": ["security", "owasp", "node", "react", "vue", "npm", "performance"]
+    }
+  ]
+}

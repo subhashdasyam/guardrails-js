@@ -2,31 +2,57 @@
 
 A Claude Code plugin that tells Claude when the JavaScript it just wrote is unsafe or slow, so Claude fixes it in the same turn.
 
-Status: design done, no code yet. The full design is in [docs/PLAN.md](docs/PLAN.md).
+**v0.1 works today**: 22 rules for Node and Express, the npm install gate, session priming, and the repo audit command. React, Vue, and the performance pack are next. The full design is in [docs/PLAN.md](docs/PLAN.md).
 
 ## The problem
 
-Claude writes JavaScript fast, and by default it writes it badly. String-built SQL. `child_process.exec` with data from a request. `dangerouslySetInnerHTML`. `v-html`. `Math.random()` for session tokens. `rejectUnauthorized: false`. Sync file reads inside a route handler. Then it runs `npm install` on a package nobody checked, and the postinstall script runs before you can look at it.
+Claude writes JavaScript fast, and by default it writes it badly. String-built SQL. `child_process.exec` with data from a request. `dangerouslySetInnerHTML`. `Math.random()` for session tokens. `rejectUnauthorized: false`. Then it runs `npm install` on a package nobody checked, and the postinstall script runs before you can look at it.
 
-## What it does
+## How it works
 
-The plugin hooks into Claude Code at three points.
+Three hooks.
 
-At session start it reads your `package.json`, works out your stack, and gives Claude a short set of rules for that stack only. A Vue project never gets React rules.
+**At session start** it reads your `package.json`, works out your stack, and gives Claude a short rule set for that stack only. A Vue project never gets React rules. It also flags problems that are already there, such as a missing lockfile or a known compromised dependency version.
 
-After every file write it scans the code. A cheap regex pass runs first. If nothing matches, the hook exits and costs you nothing. If something does match, it parses the file and runs the real checks. Findings go back to Claude, which rewrites the code.
+**After every file write** it scans the code. A regex pass runs first, and if nothing matches the hook exits having done almost no work. On a match it parses the file, tracks where request data flows, and reports what it finds. Critical and high findings go back to Claude on the loud channel so it rewrites them. Everything else arrives as a quiet note.
 
-Before every `npm install` it checks the package. If the name is one edit away from a popular package, or it is not in your lockfile, or it is on the known-bad list, you get asked before anything runs.
+The scan runs in the background and never makes Claude wait.
 
-## What it does not do
+**Before every `npm install`** it checks the package against a known-bad list, measures how close the name is to a popular package, and looks at whether it is already in your lockfile. If anything looks off you get asked before the install runs.
+
+## What it will not do
 
 It never blocks a file write. The file lands, then Claude gets told what is wrong. Blocking edits makes Claude get stuck, and one bad rule ruins your day.
 
-The `npm install` prompt is the only place it interrupts you. Advice after a postinstall script has already run is worthless.
+The `npm install` prompt is the only place it interrupts you, because advice after a postinstall script has already run is worthless. Even then it asks rather than refusing.
 
-It has no Python in it. Not in the analyzer, not in the hooks, not in the build.
+There is no Python in it. Not in the analyzer, not in the hooks, not in the build.
 
-It makes no model calls by default, so it costs nothing to run.
+It makes no model calls, so it costs nothing to run.
+
+## Install
+
+```
+/plugin marketplace add subhashdasyam/guardrails-js
+/plugin install guardrails-js@guardrails-js
+```
+
+Nothing else to set up. There are no runtime dependencies: the parser is bundled into `dist/`, which is committed, so a clone is all it takes.
+
+Check it loaded with `/hooks`. You should see three entries under Plugin Hooks.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `/guardrails-js:audit [path]` | Scan the whole repository, not just what Claude touched |
+| `/guardrails-js:report` | Summarise what has been flagged this session |
+
+There is also a CLI for CI:
+
+```bash
+node dist/audit.mjs src --format json --fail-on high
+```
 
 ## How it compares to the official plugin
 
@@ -41,57 +67,90 @@ Anthropic ships [`security-guidance`](https://code.claude.com/docs/en/security-g
 | Performance checks | nothing | event loop, concurrency, memory, React and Vue render |
 | Dependency CVEs | nothing | Next.js, React Server Components, Nuxt, Vite version checks |
 | Model cost | a model call per turn and per commit | none |
-| Deep model review | yes | off by default |
+| Deep model review | yes | none |
 
 They use different hooks and do not fight each other. Run both.
 
-## What it checks
+## What it checks today
 
-About 60 rules, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits, the OWASP API Top 10.
+22 rules, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/) and CWE.
+
+| Rule | What it catches | OWASP |
+|---|---|---|
+| SQL-01, SQL-02, SQL-03 | SQL built from request data, raw ORM queries, `$queryRawUnsafe` | A05 |
+| NOSQL-01, NOSQL-02 | Mongo operator injection, `$where` with user input | A05 |
+| CMD-01, CMD-02 | `exec` with a built string, `shell: true` on spawn | A05 |
+| PATH-01 | File paths from user input with no containment check | A05 |
+| SSTI-01 | Templates compiled from user input | A05 |
+| HTTP-01 | Header injection and open redirects | A05 |
+| SSRF-01, SSRF-02, SSRF-03 | Requests to user supplied URLs, redirect following, string based host blocking | A01 |
+| DESER-01 to DESER-04 | `node-serialize`, `vm` and `vm2`, computed `require`, unsafe YAML | A08, A05 |
+| SECRET-01 | Keys written into source | A04 |
+| TLS-01 | Certificate checking turned off | A02 |
+| CORS-01 | Any origin allowed with credentials | A02 |
+| ERR-01 | Stack traces sent to clients | A10 |
+| PROXY-01 | `trust proxy` set to true | A02 |
 
 For the record: there is no OWASP Top 10 2026. The 2025 list came out in November 2025 and is the current one. An LLM Top 10 2026 exists, but that is a separate project.
 
-Rules cover:
+Three skills carry the longer fix recipes and load only when Claude needs them: `node-security`, `react-vue-security`, and `npm-supply-chain`.
 
-- Injection: SQL, NoSQL operators, shell, path traversal, template injection, header injection
-- Cross-site scripting: `dangerouslySetInnerHTML`, `v-html`, `innerHTML`, `eval`, unsafe `href`
-- Server-side request forgery, including redirect following and metadata endpoints
-- Auth and crypto: JWT algorithm pinning, `jwt.decode` used as a check, weak password hashing, timing-unsafe comparison, cookie flags
-- Access control: object references without an ownership check, mass assignment, routes with no guard
-- Deserialization: `node-serialize`, `vm2`, dynamic `require`, `js-yaml`
-- Framework CVEs: Next.js middleware bypass (CVE-2025-29927), React Server Components (CVE-2025-55182), Nuxt and Vite dev server exposure
-- Secrets and config: hardcoded keys, disabled TLS checks, wildcard CORS with credentials, stack traces sent to clients
-- Prototype pollution
-- npm supply chain: lockfile policy, install scripts, known-bad versions
-- Performance: sync work in request handlers, unbounded `Promise.all`, ignored stream backpressure, N+1 queries, React key and re-render problems, Vue reactivity problems
+## Configuration
 
-It does not warn about missing `useMemo`. React's own docs say memoization is an optimization, not a bug, and linting for its absence is noise.
+Optional `.guardrails-js.json` in your project root:
+
+```json
+{
+  "disableRules": ["PROXY-01"],
+  "severityOverrides": { "HTTP-01": "low" },
+  "excludePaths": ["**/legacy/**"],
+  "network": true,
+  "minSeverity": "low",
+  "priming": true
+}
+```
+
+To silence one line, say why:
+
+```js
+// guardrails-js-ignore SQL-01 -- id is an integer validated by the route schema
+const rows = await pool.query(`SELECT * FROM t WHERE id = ${id}`);
+```
+
+The reason after `--` is required. An ignore without one gets reported itself, so suppressions stay reviewable.
+
+If a finding comes back twice and you fix it twice, the third time it drops to a quiet note instead of looping.
 
 ## Privacy
 
-By default the npm check asks osv.dev and registry.npmjs.org about packages you are installing. That means package names leave your machine. Set `"network": false` in `.guardrails-js.json` to turn it off. The offline checks still work.
+By default the npm check asks osv.dev and registry.npmjs.org about packages you are about to install. That means package names leave your machine. Set `"network": false` to turn it off. The offline checks still work: the bundled known-bad list, the typosquat distance check, and the lockfile comparison all run locally in about five milliseconds.
 
-## Install
+Nothing else ever leaves your machine. File contents are never sent anywhere.
 
-Not published yet. When it is:
+## Development
 
+```bash
+npm ci --ignore-scripts
+npm test              # 109 rule and engine tests
+npm run build         # rebuild dist/, which is committed
+npm run check:dist    # fail if the committed bundle is stale
+npm run bench         # latency budget
+node test/hooks.contract.mjs
 ```
-/plugin marketplace add subhashdasyam/guardrails-js
-/plugin install guardrails-js@guardrails-js
-```
 
-## Build order
+Every rule needs one case that must fire and at least two safe lookalikes that must not, in `test/cases/`. On top of that, `test/corpus/` holds correct code full of near misses, and any finding there fails the build. That gate is what stops the rule set turning into noise.
+
+Measured on this machine: 34 ms for a clean file, 48 ms when a rule fires. Most of that is Node starting up.
+
+## What is next
 
 | Version | What lands |
 |---|---|
-| v0.1 | Engine, hooks, config, reporting, 22 Node rules, npm gate |
 | v0.2 | Auth, crypto, access control, denial of service, prototype pollution |
-| v0.3 | React and Next.js |
-| v0.4 | Vue and Nuxt |
+| v0.3 | React and Next.js, including the middleware and server action rules |
+| v0.4 | Vue and Nuxt, with real template parsing |
 | v0.5 | Performance rules |
-| v1.0 | Repo-wide audit command, CI mode, docs, published |
-
-Roughly three weeks. Every version works on its own.
+| v1.0 | Published to the marketplace |
 
 ## License
 

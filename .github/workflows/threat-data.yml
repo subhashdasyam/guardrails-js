@@ -1,0 +1,64 @@
+name: threat-data
+
+# Refreshes the offline denylist and the popular package list, then opens a pull
+# request. Nothing is fetched at hook time on purpose: a security tool that
+# downloads its own rules at runtime is a remote code path into the thing meant
+# to protect you.
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - name: Fetch the OSV npm feed
+        run: |
+          curl -fsSL -o npm-osv.zip https://osv-vulnerabilities.storage.googleapis.com/npm/all.zip
+          mkdir -p osv-npm
+          unzip -q npm-osv.zip -d osv-npm
+          ls osv-npm | wc -l
+
+      - name: Rebuild threat data
+        run: node scripts/refresh-threat-data.mjs --osv-dir osv-npm
+
+      - name: Rebuild the bundle
+        run: npm run build
+
+      - name: Tests still pass
+        run: npm test
+
+      - name: Tidy up
+        run: rm -rf osv-npm npm-osv.zip
+
+      - name: Open a pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: threat-data-refresh
+          title: 'Refresh npm threat data'
+          commit-message: 'Refresh npm denylist and popular package list'
+          body: |
+            Automated refresh of the offline supply chain data.
+
+            Sources: the OSV npm feed for malicious package advisories, and the
+            npm registry search API for popular package names.
+
+            Check the denylist diff before merging. Entries are only ever added
+            by this job, never removed.
+          delete-branch: true

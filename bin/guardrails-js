@@ -1,0 +1,2 @@
+#!/usr/bin/env node
+import('../dist/audit.mjs').catch((err) => { console.error(err); process.exit(1); });

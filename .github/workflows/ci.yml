@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['18', '20', '22', '24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      - name: Rule and engine tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Committed bundle matches source
+        run: npm run check:dist
+
+      - name: Latency budget
+        run: npm run bench
+
+      - name: Audit our own source
+        run: node dist/audit.mjs src --format text
+
+  hooks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+
+      - name: Hook contract
+        run: node test/hooks.contract.mjs

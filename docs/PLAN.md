@@ -1,5 +1,17 @@
 # guardrails-js design
 
+## Build status
+
+v0.1 is built and tested: the engine, all three hooks, the 22 rule node-core pack, the npm install gate, session priming, suppression, the loop guard, the report file, both slash commands, all three skills, and CI.
+
+Three things came out differently from the plan below, and the plan text is left as written so the reasons stay visible.
+
+1. **No `if` field in hooks.json.** The plan used `"if": "Edit(*.ts)"` to filter by file extension before spawning Node. That field depends on the CLI version, and the hook has to self filter anyway, so relying on it bought nothing and could break silently. The hook checks the extension itself and exits in about 33 ms for a file it does not handle.
+2. **Rule cases live in `test/cases/`, not one directory per rule.** The requirement is unchanged: one case that must fire, at least two safe lookalikes that must not, and CI checks that every rule has them. Keeping them in one module per pack made them far easier to read side by side. `test/corpus/` still holds real files for the false positive gate.
+3. **Vue template rules are deferred to v0.4.** v0.1 parses the `<script>` block of a `.vue` file by blanking everything else while keeping byte offsets, so line numbers stay correct with no mapping table. Template directives such as `v-html` need the real Vue compiler and land with the rest of pack D.
+
+Measured on the development machine: 34 ms for a clean file, 48 ms when a rule fires, against budgets of 60 ms and 140 ms.
+
 ## Why
 
 Claude writes JavaScript fast, and by default it writes it badly. String-built SQL. `child_process.exec` with data from a request. `dangerouslySetInnerHTML`. `v-html`. `Math.random()` for tokens. `rejectUnauthorized: false`. Unbounded `Promise.all`. Sync file reads in a request handler. It also runs `npm install` when asked, and a malicious postinstall script runs before anyone can look at it.

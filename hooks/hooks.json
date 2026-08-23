@@ -1,0 +1,46 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec",
+            "args": ["node", "${CLAUDE_PLUGIN_ROOT}/dist/session-start.mjs"],
+            "timeout": 10,
+            "statusMessage": "guardrails-js reading your stack"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec",
+            "args": ["node", "${CLAUDE_PLUGIN_ROOT}/dist/post-write.mjs"],
+            "async": true,
+            "asyncRewake": true,
+            "timeout": 20,
+            "statusMessage": "guardrails-js scanning"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec",
+            "args": ["node", "${CLAUDE_PLUGIN_ROOT}/dist/pre-bash.mjs"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
