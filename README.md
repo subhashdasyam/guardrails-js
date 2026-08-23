@@ -272,18 +272,9 @@ node test/hooks.contract.mjs
 
 Every rule needs one case that must fire and at least two safe lookalikes that must not, in `test/cases/`. On top of that, `test/corpus/` holds correct code full of near misses, and any finding there fails the build. That gate is what stops the rule set turning into noise.
 
+If a rule fires on correct code, that is a bug worth reporting. The corpus exists precisely so those get fixed rather than tolerated.
+
 The latency gate measures the plugin, not the machine, because absolute wall clock varies by more than the thing being measured. It compares against a bare node process and against the hook loading and exiting early. On a development machine: 20 ms to load the bundle, 2 ms to scan a clean file, 15 ms to scan one with findings. Node startup accounts for the rest of the roughly 37 ms a write costs end to end.
-
-## What is next
-
-Nothing is promised. Things worth doing, roughly in order of how much they would help:
-
-- Measure what the ruleset misses. The corpus gate shapes the rules against false positives and nothing yet measures false negatives. Running it against NodeGoat and Juice Shop would give a number.
-- Angular templates in `.html` files. Only inline component templates are read today, and most Angular projects keep theirs in separate files.
-- Svelte 5 runes. The rules read the markup and the script, but `$state` and `$derived` change where values come from.
-- A denylist that updates itself between releases without becoming a remote code path.
-
-If a rule fires on correct code, that is a bug worth reporting. The false positive corpus in `test/corpus/` exists precisely so those get fixed rather than tolerated.
 
 ## License
 
