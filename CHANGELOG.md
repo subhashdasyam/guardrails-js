@@ -2,7 +2,7 @@
 
 ## 1.0.0
 
-First release. 70 rules, three hooks, two commands, three skills, and a CLI for CI.
+First release. 74 rules and 4 dependency advisories, three hooks, two commands, three skills, and a CLI for CI.
 
 ### What it does
 

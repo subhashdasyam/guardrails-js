@@ -2,17 +2,49 @@
 
 ## Build status
 
-v1.0 is built and tested. Everything in this plan shipped: the engine, all three hooks, 70 rules across six packs, dependency version checks, the npm install gate, session priming, suppression, the loop guard, the report file, both slash commands, all three skills, the CI binary, and the workflows. See [CHANGELOG.md](../CHANGELOG.md).
+v1.0 is built and tested: the engine, all three hooks, 74 rules across seven packs, four dependency version advisories, the npm install gate, session priming, suppression, the loop guard, the report file, both slash commands, all three skills, the CI binary, and the workflows. See [CHANGELOG.md](../CHANGELOG.md).
 
-Five things came out differently from the plan below, and the plan text is left as written so the reasons stay visible.
+The rule inventory further down was written before any code existed. The section below is what actually shipped, and the plan text is left as written so the reasoning stays visible.
 
-1. **No `if` field in hooks.json.** The plan used `"if": "Edit(*.ts)"` to filter by file extension before spawning Node. That field depends on the CLI version, and the hook has to self filter anyway, so relying on it bought nothing and could break silently. The hook checks the extension itself and exits in about 33 ms for a file it does not handle.
-2. **Rule cases live in `test/cases/`, not one directory per rule.** The requirement is unchanged: one case that must fire, at least two safe lookalikes that must not, and CI checks that every rule has them. Keeping them in one module per pack made them far easier to read side by side. `test/corpus/` still holds real files for the false positive gate.
-3. **Vue templates use a scanner, not the Vue compiler.** The `<script>` block of a `.vue` file is parsed properly, with everything outside it blanked while byte offsets stay put, so line numbers need no mapping table. The `<template>` block goes through a small attribute scanner instead. Pulling in `@vue/compiler-sfc` would roughly double the bundle for rules that only ever read attribute names and their expressions. The scanner does not handle dynamic attribute names such as `:[key]`, and those come out as no match rather than a wrong match, so the failure direction is a missed finding and never a false one.
-4. **Version rules are not AST rules.** A middleware bypass or an exposed dev server is a property of the version installed, not of any line of code, so those live in a separate dependency checker that reads the lockfile and the manifest. `package.json` gets its own path through the post-write hook and the audit command.
-5. **The default severity floor is `perf`, not `low`.** The plan set it to `low`, which sits above `perf` and would have silently hidden the entire performance pack. Caught by the first performance rule that failed to appear.
+### Five things that came out differently from the plan
+
+1. **No `if` field in hooks.json.** It is CLI-version dependent and the hook must self-filter anyway, so relying on it bought nothing and could break quietly.
+2. **Vue templates use a scanner, not `@vue/compiler-sfc`.** That compiler would roughly double the bundle for rules that only read attribute names. The scanner misses dynamic attribute names like `:[key]`, and misses them as no match rather than a wrong match.
+3. **Version rules are not AST rules.** A middleware bypass is a property of the version installed, not of any line of code, so those read the lockfile instead.
+4. **Default severity floor is `perf`, not `low`.** The plan's `low` sits above `perf` and would have silently hidden the entire performance pack.
+5. **Rule cases live in `test/cases/`** rather than one directory per rule. Same requirement enforced: one firing case, two safe lookalikes, checked in CI.
+
+### Bugs the tool found in itself
+
+The false-positive corpus caught four, all fixed: `new URL(req.body.url)` treated as mass assignment; allowlist lookups like `SORT[req.query.sort]` carrying taint (the exact pattern the tool recommends); PERF-N01 treating any function that mentions "request" as a handler; PERF-N07 flagging `Promise.all` over an already-sliced list. The list-key rule was also flagging every `<td>` inside a mapped `<tr>`.
+
+Two findings in its own source turned out to be real and now carry suppressions with written reasons. CI fails the build if the self-audit ever stops being clean.
+
+### What the plan asked for and did not get built
+
+1. **Optional model escalation.** The decision table below promises a `prompt`-type hook that adjudicates unresolved medium authz and IDOR findings when `modelEscalation` is on. The config flag exists and nothing reads it. The deterministic core turned out to be the whole product, and adding a model call would have cost the two properties that make this worth running: zero usage cost and a test suite that gives the same answer every time.
+2. **Detection-rate tracking against NodeGoat and Juice Shop.** Planned as a reported metric rather than a merge gate, and simply absent. The false-positive corpus is the gate that actually shapes the rules, and a false-negative benchmark is still worth adding.
+3. **`SUPPLY-LOCK`, `SUPPLY-SCRIPTS`, `SUPPLY-DENY`, and `SUPPLY-PROV` as rules.** All four behaviours ship, but as checks in the SessionStart baseline pass and the `npm install` gate rather than as AST rules with ids. Lockfile presence, install-script policy, and known-bad versions are properties of a project and a command line, not of a syntax tree.
+4. **`PP-VUE`.** Dropped. `PP-02` and `PP-03` already cover merging request data into long lived objects, and framing it as a Vue rule added a name without adding detection. `VUE-URL` was built instead, covering bound `:href` and `:src` with no protocol check, which was the real gap.
+
+`PERF-N05` in the pack list below is the same detector as `REDOS-01` and was counted twice in the plan. `RATE-01`, covering login endpoints with no rate limit, was added during v0.2 and never appeared in the plan inventory.
+
+### Numbers, corrected
+
+The plan targeted about 60 enforced rules. What shipped:
+
+| | Count |
+|---|---|
+| Rules in `RULES` | 74 |
+| Dependency advisory ids (`NEXT-VER`, `RSC-VER`, `NUXT-VER`, `VITE-VER`) | 4 |
+| Distinct finding ids in total | 78 |
+| Packs | 7 |
 
 Measured on the development machine: 37 ms for a clean file, 49 ms when a rule fires, against budgets of 60 ms and 140 ms. The tool reports nothing against its own source, with two documented suppressions where the hook reads back the file it was told about.
+
+### Everything else verified against the code
+
+Checked line by line: no `if` field in hooks.json; `async` and `asyncRewake` both set; critical and high go out as exit 2 with stderr while everything else goes as `additionalContext`; the npm gate returns `ask` and never `deny`; all six offline install signals present; OSV enrichment capped at two seconds with a TTL cache; loop guard at two loud rounds before downgrading; state in `${CLAUDE_PLUGIN_DATA}` and written through a rename; findings scoped to the changed region widened to the enclosing function, with a file-wide critical set; report at `.claude/guardrails-js-report.md`; three skills, two commands, and a CI job that runs tests, a bundle staleness check, the latency budget, the hook contract, and a self-audit that fails on high.
 
 ## Why
 
@@ -79,6 +111,8 @@ The README carries this table. Do not rebuild their `Stop` hook review.
 | Standards | OWASP Top 10:2025 primary, CWE Top 25 2025 and API Top 10:2023 secondary |
 
 ## Layout
+
+As planned. Two things differ in the built tree: `test/fixtures/` does not exist, because rule cases live in `test/cases/` as one module per pack, and there are more rule directories than shown here (`node-auth/`, `node-dos/`, `react/`, `vue/`, `perf-node/`, `perf-react/`), plus `src/engine/vue-template.js` and `src/supply-chain/dependencies.js`.
 
 ```
 guardrails-js/                        # repo root is also the marketplace root
@@ -251,6 +285,8 @@ Each finding records the sink, the source, the path between them, the missing gu
 ## Rules
 
 Rule IDs match the research corpus so fixtures line up one to one.
+
+This inventory is the plan, not the shipped set. The differences are listed under Build status: `PP-VUE` and the four `SUPPLY-*` entries were not built as rules, `PERF-N05` is the same detector as `REDOS-01` and is counted twice here, and `RATE-01` and `VUE-URL` shipped without appearing below. The pack counts in the headings are the plan's counts and several are wrong: pack B lists twenty ids under a heading that says sixteen. For the shipped list run `node -e "import('./src/rules/index.js').then(m => console.log(m.RULES.map(r => r.id).join(' ')))"`.
 
 Pack A, node-core, 22 rules, v0.1:
 `SQL-01/02/03` for pg, sequelize, knex, typeorm raw queries and Prisma `$queryRawUnsafe`. `NOSQL-01/02` for `$ne` and `$where` operator injection. `CMD-01/02` for `exec`, `execSync`, and `shell: true`. `PATH-01` for traversal without a resolve and prefix check. `SSTI-01`. `HTTP-01` for CRLF and header injection. `SSRF-01/02/03` for tainted URLs, redirect following, and denylist-only checks. `DESER-01/02/03/04` for `node-serialize`, `vm` and `vm2`, dynamic `require`, and version-aware `js-yaml`. `SECRET-01`. `TLS-01` for `rejectUnauthorized: false`. `CORS-01` for `origin: true` with credentials. `ERR-01` for stack traces sent to clients. `PROXY-01` for `trust proxy: true`.

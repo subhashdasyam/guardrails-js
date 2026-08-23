@@ -14636,7 +14636,6 @@ var DEFAULTS = {
   network: true,
   primingPacks: ["auto"],
   priming: true,
-  modelEscalation: false,
   // Everything by default. Performance findings sit below low, so a default of
   // "low" would have silently hidden the whole performance pack.
   minSeverity: "perf"

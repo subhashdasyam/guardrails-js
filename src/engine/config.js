@@ -20,11 +20,16 @@ const DEFAULTS = {
   network: true,
   primingPacks: ['auto'],
   priming: true,
-  modelEscalation: false,
   // Everything by default. Performance findings sit below low, so a default of
   // "low" would have silently hidden the whole performance pack.
   minSeverity: 'perf',
 };
+
+// There used to be a modelEscalation flag here, for a planned hook that would
+// have asked a model to adjudicate findings the analyzer could not settle. It
+// was never built, and a config key that does nothing is a lie in a tool people
+// are meant to trust. Setting it in .guardrails-js.json is harmless and still
+// does nothing.
 
 function readJson(file) {
   try {

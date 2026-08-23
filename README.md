@@ -2,7 +2,7 @@
 
 A Claude Code plugin that tells Claude when the JavaScript it just wrote is unsafe or slow, so Claude fixes it in the same turn.
 
-**v1.0**: 70 rules covering security and performance across Node, Express, Fastify, NestJS, React, Next.js, Vue, and Nuxt, plus dependency version checks, the npm install gate, session priming, a repo audit command, and a CLI for CI. See the [changelog](CHANGELOG.md) and the [design notes](docs/PLAN.md).
+**v1.0**: 74 rules covering security and performance across Node, Express, Fastify, NestJS, React, Next.js, Vue, and Nuxt, plus dependency version checks, the npm install gate, session priming, a repo audit command, and a CLI for CI. See the [changelog](CHANGELOG.md) and the [design notes](docs/PLAN.md).
 
 ## The problem
 
@@ -73,7 +73,7 @@ They use different hooks and do not fight each other. Run both.
 
 ## What it checks today
 
-70 rules, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
+74 rules plus 4 dependency advisories, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
 
 Injection and interpreters, A05:
 
