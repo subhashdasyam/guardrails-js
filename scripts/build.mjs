@@ -31,7 +31,7 @@ async function run() {
       outfile: path.join(root, output),
       bundle: true,
       platform: 'node',
-      target: 'node18',
+      target: 'node20',
       format: 'esm',
       minify: false,
       legalComments: 'none',

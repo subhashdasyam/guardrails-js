@@ -39,6 +39,8 @@ It makes no model calls by default, so it costs nothing to run. There is an opt-
 
 Nothing else to set up. There are no runtime dependencies: the parser is bundled into `dist/`, which is committed, so a clone is all it takes.
 
+Needs Node 20.10 or later. Tested on 20, 22, 24, and 26.
+
 Check it loaded with `/hooks`. You should see three entries under Plugin Hooks.
 
 ## Commands
