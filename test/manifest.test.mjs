@@ -116,9 +116,13 @@ test('the settings panel advertises the same defaults the code uses', async () =
   }
   const code = loadConfig('/nonexistent-so-defaults-apply');
 
+  const { performanceMode } = await import('../src/engine/config.js');
+
+  // The panel can only say yes or no, so for performance the question is
+  // whether saying yes leaves it switched on, not whether the values match.
   const pairs = [
     ['network', code.network],
-    ['performance', code.performance],
+    ['report', code.report],
     ['priming', code.priming],
   ];
 
@@ -133,6 +137,13 @@ test('the settings panel advertises the same defaults the code uses', async () =
         'then change behaviour without anyone asking for it.',
     );
   }
+
+  assert.equal(plugin.userConfig?.performance?.default, true, 'the panel offers performance on');
+  assert.notEqual(
+    performanceMode(code),
+    'off',
+    'and the code agrees, so accepting the default keeps performance reporting',
+  );
 });
 
 test('nothing in the settings panel asks people to type a value', () => {

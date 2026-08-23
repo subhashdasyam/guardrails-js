@@ -66,8 +66,15 @@ var DEFAULTS = {
   // this scale, see the note above SECURITY_SEVERITIES.
   minSeverity: "medium",
   // Performance findings are advisory and never interrupt, so they are on by
-  // default and switched separately.
-  performance: true
+  // default and switched separately from the security floor.
+  //
+  //   true or 'high'  the findings that reliably bite, which is the default
+  //   'all'           everything, including the ones that depend on data we
+  //                   cannot see, such as whether a render is actually slow
+  //   false or 'off'  none
+  performance: "high",
+  // Write .claude/guardrails-js-report.md as findings arrive.
+  report: true
 };
 function readJson(file) {
   try {
@@ -111,7 +118,10 @@ function loadConfig(cwd = process.cwd()) {
     config.priming = envBool("CLAUDE_PLUGIN_OPTION_PRIMING", DEFAULTS.priming);
   }
   if (fromFile.performance === void 0) {
-    config.performance = envBool("CLAUDE_PLUGIN_OPTION_PERFORMANCE", DEFAULTS.performance);
+    config.performance = envBool("CLAUDE_PLUGIN_OPTION_PERFORMANCE", true) ? "high" : "off";
+  }
+  if (fromFile.report === void 0) {
+    config.report = envBool("CLAUDE_PLUGIN_OPTION_REPORT", DEFAULTS.report);
   }
   if (!SECURITY_SEVERITIES.includes(config.minSeverity)) {
     config.minSeverity = DEFAULTS.minSeverity;
@@ -133,9 +143,18 @@ function loadConfig(cwd = process.cwd()) {
   };
   return config;
 }
-function shouldReport(severity, config) {
-  if (severity === "perf") return config.performance !== false;
-  return meetsMinSeverity(severity, config.minSeverity);
+function performanceMode(config) {
+  const value = config.performance;
+  if (value === false || value === "off" || value === "none") return "off";
+  if (value === "all" || value === "low") return "all";
+  return "high";
+}
+function shouldReport(severity, config, impact = "high") {
+  if (severity !== "perf") return meetsMinSeverity(severity, config.minSeverity);
+  const mode = performanceMode(config);
+  if (mode === "off") return false;
+  if (mode === "all") return true;
+  return impact !== "low";
 }
 function meetsMinSeverity(severity, minSeverity) {
   const have = SEVERITY_ORDER.indexOf(severity);
@@ -780,7 +799,7 @@ function runManifestRules(projectRoot, config, pkg = null, rules = manifest_defa
     }
     if (!hit) continue;
     const severity = config.severityFor({ ...rule, severity: hit.severityHint ?? rule.severity });
-    if (!shouldReport(severity, config)) continue;
+    if (!shouldReport(severity, config, rule.impact)) continue;
     findings.push({
       ruleId: rule.id,
       title: rule.title,

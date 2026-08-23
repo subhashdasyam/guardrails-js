@@ -14794,8 +14794,15 @@ var DEFAULTS = {
   // this scale, see the note above SECURITY_SEVERITIES.
   minSeverity: "medium",
   // Performance findings are advisory and never interrupt, so they are on by
-  // default and switched separately.
-  performance: true
+  // default and switched separately from the security floor.
+  //
+  //   true or 'high'  the findings that reliably bite, which is the default
+  //   'all'           everything, including the ones that depend on data we
+  //                   cannot see, such as whether a render is actually slow
+  //   false or 'off'  none
+  performance: "high",
+  // Write .claude/guardrails-js-report.md as findings arrive.
+  report: true
 };
 function readJson(file) {
   try {
@@ -14839,7 +14846,10 @@ function loadConfig(cwd = process.cwd()) {
     config.priming = envBool("CLAUDE_PLUGIN_OPTION_PRIMING", DEFAULTS.priming);
   }
   if (fromFile.performance === void 0) {
-    config.performance = envBool("CLAUDE_PLUGIN_OPTION_PERFORMANCE", DEFAULTS.performance);
+    config.performance = envBool("CLAUDE_PLUGIN_OPTION_PERFORMANCE", true) ? "high" : "off";
+  }
+  if (fromFile.report === void 0) {
+    config.report = envBool("CLAUDE_PLUGIN_OPTION_REPORT", DEFAULTS.report);
   }
   if (!SECURITY_SEVERITIES.includes(config.minSeverity)) {
     config.minSeverity = DEFAULTS.minSeverity;
@@ -14861,9 +14871,18 @@ function loadConfig(cwd = process.cwd()) {
   };
   return config;
 }
-function shouldReport(severity, config) {
-  if (severity === "perf") return config.performance !== false;
-  return meetsMinSeverity(severity, config.minSeverity);
+function performanceMode(config) {
+  const value = config.performance;
+  if (value === false || value === "off" || value === "none") return "off";
+  if (value === "all" || value === "low") return "all";
+  return "high";
+}
+function shouldReport(severity, config, impact = "high") {
+  if (severity !== "perf") return meetsMinSeverity(severity, config.minSeverity);
+  const mode = performanceMode(config);
+  if (mode === "off") return false;
+  if (mode === "all") return true;
+  return impact !== "low";
 }
 function meetsMinSeverity(severity, minSeverity) {
   const have = SEVERITY_ORDER.indexOf(severity);
@@ -15740,7 +15759,7 @@ function analyze(options) {
       seen.add(key);
       if (suppressions.isSuppressed(rule.id, line)) continue;
       const severity = config.severityFor({ ...rule, severity: hit.severityHint ?? rule.severity });
-      if (!shouldReport(severity, config)) continue;
+      if (!shouldReport(severity, config, rule.impact)) continue;
       findings.push({
         ruleId: rule.id,
         title: rule.title,
@@ -15780,7 +15799,7 @@ function analyze(options) {
           ...rule,
           severity: hit.severityHint ?? rule.severity
         });
-        if (!shouldReport(severity, config)) continue;
+        if (!shouldReport(severity, config, rule.impact)) continue;
         findings.push({
           ruleId: rule.id,
           title: rule.title,
@@ -15817,7 +15836,7 @@ function analyze(options) {
         ...rule,
         severity: hit.severityHint ?? rule.severity
       });
-      if (!shouldReport(severity, config)) continue;
+      if (!shouldReport(severity, config, rule.impact)) continue;
       findings.push({
         ruleId: rule.id,
         title: rule.title,
@@ -16519,7 +16538,7 @@ function runManifestRules(projectRoot, config, pkg = null, rules = manifest_defa
     }
     if (!hit) continue;
     const severity = config.severityFor({ ...rule, severity: hit.severityHint ?? rule.severity });
-    if (!shouldReport(severity, config)) continue;
+    if (!shouldReport(severity, config, rule.impact)) continue;
     findings.push({
       ruleId: rule.id,
       title: rule.title,
@@ -18601,6 +18620,7 @@ function inRequestPath(node, ctx) {
 var FS_SYNC = /^(fs|fsSync|nodeFs)\./;
 var PERF_N01 = {
   id: "PERF-N01",
+  impact: "high",
   title: "Synchronous file access in a request handler",
   severity: "perf",
   owasp2025: "A10",
@@ -18636,6 +18656,7 @@ var BLOCKING_SYNC = [
 ];
 var PERF_N02 = {
   id: "PERF-N02",
+  impact: "high",
   title: "Expensive synchronous call in a request handler",
   severity: "perf",
   owasp2025: "A10",
@@ -18669,6 +18690,7 @@ function awaitedCallInside(node) {
 }
 var PERF_N06 = {
   id: "PERF-N06",
+  impact: "low",
   title: "Awaiting one at a time in a loop",
   severity: "perf",
   owasp2025: "A10",
@@ -18689,6 +18711,7 @@ var PERF_N06 = {
 var LIMITER = /p-limit|pLimit|pMap|p-map|Bottleneck|Semaphore|concurrency|PQueue|p-queue/;
 var PERF_N07 = {
   id: "PERF-N07",
+  impact: "high",
   title: "Unbounded parallel fan out",
   severity: "perf",
   owasp2025: "A10",
@@ -18722,6 +18745,7 @@ var PERF_N07 = {
 };
 var PERF_N08 = {
   id: "PERF-N08",
+  impact: "high",
   title: "Stream write with the result thrown away",
   severity: "perf",
   owasp2025: "A10",
@@ -18752,6 +18776,7 @@ var PERF_N08 = {
 };
 var PERF_N10 = {
   id: "PERF-N10",
+  impact: "high",
   title: "Async callback passed to forEach",
   severity: "perf",
   owasp2025: "A10",
@@ -18772,6 +18797,7 @@ var PERF_N10 = {
 var EVICTION = /\.delete\(|\.clear\(|LRU|lru|maxSize|max:|ttl|TTL|expire|evict/;
 var PERF_N12 = {
   id: "PERF-N12",
+  impact: "high",
   title: "Cache that never evicts anything",
   severity: "perf",
   owasp2025: "A10",
@@ -18799,6 +18825,7 @@ var PERF_N12 = {
 };
 var PERF_N17 = {
   id: "PERF-N17",
+  impact: "high",
   title: "Database call inside a loop",
   severity: "perf",
   owasp2025: "A10",
@@ -18832,6 +18859,7 @@ var perf_default = [PERF_N01, PERF_N02, PERF_N06, PERF_N07, PERF_N08, PERF_N10, 
 // src/rules/perf-react/perf.js
 var REACT_04 = {
   id: "REACT-04",
+  impact: "low",
   title: "New object or function passed to a memoized child",
   severity: "perf",
   owasp2025: "A10",
@@ -18859,6 +18887,7 @@ var REACT_04 = {
 };
 var REACT_05 = {
   id: "REACT-05",
+  impact: "high",
   title: "List key is the array index",
   severity: "perf",
   owasp2025: "A10",
@@ -18906,6 +18935,7 @@ var REACT_05 = {
 var SETTER = /^set[A-Z]/;
 var REACT_07 = {
   id: "REACT-07",
+  impact: "low",
   title: "Derived value computed in an effect",
   severity: "perf",
   owasp2025: "A10",
@@ -18939,6 +18969,7 @@ var REACT_07 = {
 };
 var VUE_04 = {
   id: "VUE-04",
+  impact: "low",
   title: "v-for and v-if on the same element",
   severity: "perf",
   owasp2025: "A10",
@@ -18960,6 +18991,7 @@ var VUE_04 = {
 };
 var VUE_07 = {
   id: "VUE-07",
+  impact: "high",
   title: "v-for with no key",
   severity: "perf",
   owasp2025: "A10",
@@ -19347,7 +19379,7 @@ function checkManifest(filePath, input) {
   );
   if (findings.length === 0) return;
   applyLoopGuard(findings, input.session_id, "package.json");
-  appendReport(projectRoot, "package.json", findings);
+  if (config.report !== false) appendReport(projectRoot, "package.json", findings);
   const { loud, quiet } = splitBySeverity(findings);
   if (loud.length > 0) {
     let text = formatLoud(loud, "package.json");
@@ -19398,7 +19430,7 @@ function main() {
   });
   if (findings.length === 0) return;
   applyLoopGuard(findings, input.session_id, relative);
-  appendReport(projectRoot, relative, findings);
+  if (config.report !== false) appendReport(projectRoot, relative, findings);
   const { loud, quiet } = splitBySeverity(findings);
   if (loud.length > 0) {
     let text = formatLoud(loud, relative);

@@ -13,6 +13,7 @@ import { memberName, lastSegment, staticString, isCall } from '../helpers.js';
 
 export const REACT_04 = {
   id: 'REACT-04',
+  impact: 'low',
   title: 'New object or function passed to a memoized child',
   severity: 'perf',
   owasp2025: 'A10',
@@ -55,6 +56,7 @@ export const REACT_04 = {
 
 export const REACT_05 = {
   id: 'REACT-05',
+  impact: 'high',
   title: 'List key is the array index',
   severity: 'perf',
   owasp2025: 'A10',
@@ -120,6 +122,7 @@ const SETTER = /^set[A-Z]/;
 
 export const REACT_07 = {
   id: 'REACT-07',
+  impact: 'low',
   title: 'Derived value computed in an effect',
   severity: 'perf',
   owasp2025: 'A10',
@@ -166,6 +169,7 @@ export const REACT_07 = {
 
 export const VUE_04 = {
   id: 'VUE-04',
+  impact: 'low',
   title: 'v-for and v-if on the same element',
   severity: 'perf',
   owasp2025: 'A10',
@@ -191,6 +195,7 @@ export const VUE_04 = {
 
 export const VUE_07 = {
   id: 'VUE-07',
+  impact: 'high',
   title: 'v-for with no key',
   severity: 'perf',
   owasp2025: 'A10',

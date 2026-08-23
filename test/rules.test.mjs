@@ -18,7 +18,11 @@ const cases = [...nodeCore, ...nodeAuth, ...nodeDos, ...prototypePollution, ...r
 
 // The shipped floor is medium. A test harness has to see everything, or a low
 // severity rule could never prove that it fires.
-const config = { ...loadConfig('/nonexistent-so-defaults-apply'), minSeverity: 'low' };
+const config = {
+  ...loadConfig('/nonexistent-so-defaults-apply'),
+  minSeverity: 'low',
+  performance: 'all',
+};
 
 function run(code, pkg = null, file = 'src/app.js') {
   const { findings, parseError } = analyze({

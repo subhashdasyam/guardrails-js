@@ -118,8 +118,9 @@ test('the severity floor cannot hide the performance pack', async () => {
   const { shouldReport, loadConfig: load } = await import('../src/engine/config.js');
   const shipped = load('/nonexistent-so-defaults-apply');
 
+  const { performanceMode } = await import('../src/engine/config.js');
   assert.equal(shipped.minSeverity, 'medium', 'the shipped floor for security findings');
-  assert.equal(shipped.performance, true, 'performance findings are on by default');
+  assert.equal(performanceMode(shipped), 'high', 'performance findings are on by default');
 
   assert.ok(shouldReport('perf', shipped), 'a medium floor must not hide performance');
   assert.ok(!shouldReport('low', shipped), 'a medium floor does hide low security findings');
@@ -128,6 +129,13 @@ test('the severity floor cannot hide the performance pack', async () => {
     !shouldReport('perf', { ...shipped, performance: false }),
     'and turning performance off is what hides them',
   );
+
+  // Granularity: the default reports the findings that reliably bite, and the
+  // softer ones are there for anyone who asks for them.
+  assert.ok(shouldReport('perf', shipped, 'high'), 'high impact is the default set');
+  assert.ok(!shouldReport('perf', shipped, 'low'), 'low impact is not, by default');
+  assert.ok(shouldReport('perf', { ...shipped, performance: 'all' }, 'low'), 'all means all');
+  assert.ok(!shouldReport('perf', { ...shipped, performance: 'off' }, 'high'), 'off means none');
   assert.ok(
     shouldReport('high', { ...shipped, performance: false }),
     'which leaves security findings alone',
@@ -144,6 +152,20 @@ test('no security floor can hide a performance finding', async () => {
     assert.ok(
       shouldReport('perf', { ...base, minSeverity: floor }),
       `minSeverity ${floor} must not affect performance findings, they are not on that scale`,
+    );
+  }
+});
+
+test('every performance rule declares its impact', async () => {
+  const { RULES } = await import('../src/rules/index.js');
+  const perf = RULES.filter((rule) => rule.severity === 'perf');
+
+  assert.ok(perf.length > 0);
+  for (const rule of perf) {
+    assert.ok(
+      ['high', 'low'].includes(rule.impact),
+      `${rule.id} is a performance rule with impact ${rule.impact}. Without one it would ` +
+        'silently fall into the default set, which is a decision nobody made.',
     );
   }
 });

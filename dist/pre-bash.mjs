@@ -294,8 +294,15 @@ var DEFAULTS = {
   // this scale, see the note above SECURITY_SEVERITIES.
   minSeverity: "medium",
   // Performance findings are advisory and never interrupt, so they are on by
-  // default and switched separately.
-  performance: true
+  // default and switched separately from the security floor.
+  //
+  //   true or 'high'  the findings that reliably bite, which is the default
+  //   'all'           everything, including the ones that depend on data we
+  //                   cannot see, such as whether a render is actually slow
+  //   false or 'off'  none
+  performance: "high",
+  // Write .claude/guardrails-js-report.md as findings arrive.
+  report: true
 };
 function readJson(file) {
   try {
@@ -339,7 +346,10 @@ function loadConfig(cwd = process.cwd()) {
     config.priming = envBool("CLAUDE_PLUGIN_OPTION_PRIMING", DEFAULTS.priming);
   }
   if (fromFile.performance === void 0) {
-    config.performance = envBool("CLAUDE_PLUGIN_OPTION_PERFORMANCE", DEFAULTS.performance);
+    config.performance = envBool("CLAUDE_PLUGIN_OPTION_PERFORMANCE", true) ? "high" : "off";
+  }
+  if (fromFile.report === void 0) {
+    config.report = envBool("CLAUDE_PLUGIN_OPTION_REPORT", DEFAULTS.report);
   }
   if (!SECURITY_SEVERITIES.includes(config.minSeverity)) {
     config.minSeverity = DEFAULTS.minSeverity;

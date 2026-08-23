@@ -35,6 +35,7 @@ const FS_SYNC = /^(fs|fsSync|nodeFs)\./;
 
 export const PERF_N01 = {
   id: 'PERF-N01',
+  impact: 'high',
   title: 'Synchronous file access in a request handler',
   severity: 'perf',
   owasp2025: 'A10',
@@ -74,6 +75,7 @@ const BLOCKING_SYNC = [
 
 export const PERF_N02 = {
   id: 'PERF-N02',
+  impact: 'high',
   title: 'Expensive synchronous call in a request handler',
   severity: 'perf',
   owasp2025: 'A10',
@@ -118,6 +120,7 @@ function awaitedCallInside(node) {
 
 export const PERF_N06 = {
   id: 'PERF-N06',
+  impact: 'low',
   title: 'Awaiting one at a time in a loop',
   severity: 'perf',
   owasp2025: 'A10',
@@ -144,6 +147,7 @@ const LIMITER = /p-limit|pLimit|pMap|p-map|Bottleneck|Semaphore|concurrency|PQue
 
 export const PERF_N07 = {
   id: 'PERF-N07',
+  impact: 'high',
   title: 'Unbounded parallel fan out',
   severity: 'perf',
   owasp2025: 'A10',
@@ -187,6 +191,7 @@ export const PERF_N07 = {
 
 export const PERF_N08 = {
   id: 'PERF-N08',
+  impact: 'high',
   title: 'Stream write with the result thrown away',
   severity: 'perf',
   owasp2025: 'A10',
@@ -223,6 +228,7 @@ export const PERF_N08 = {
 
 export const PERF_N10 = {
   id: 'PERF-N10',
+  impact: 'high',
   title: 'Async callback passed to forEach',
   severity: 'perf',
   owasp2025: 'A10',
@@ -248,6 +254,7 @@ const EVICTION = /\.delete\(|\.clear\(|LRU|lru|maxSize|max:|ttl|TTL|expire|evict
 
 export const PERF_N12 = {
   id: 'PERF-N12',
+  impact: 'high',
   title: 'Cache that never evicts anything',
   severity: 'perf',
   owasp2025: 'A10',
@@ -283,6 +290,7 @@ export const PERF_N12 = {
 
 export const PERF_N17 = {
   id: 'PERF-N17',
+  impact: 'high',
   title: 'Database call inside a loop',
   severity: 'perf',
   owasp2025: 'A10',

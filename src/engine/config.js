@@ -31,8 +31,15 @@ const DEFAULTS = {
   // this scale, see the note above SECURITY_SEVERITIES.
   minSeverity: 'medium',
   // Performance findings are advisory and never interrupt, so they are on by
-  // default and switched separately.
-  performance: true,
+  // default and switched separately from the security floor.
+  //
+  //   true or 'high'  the findings that reliably bite, which is the default
+  //   'all'           everything, including the ones that depend on data we
+  //                   cannot see, such as whether a render is actually slow
+  //   false or 'off'  none
+  performance: 'high',
+  // Write .claude/guardrails-js-report.md as findings arrive.
+  report: true,
 };
 
 // There is no modelEscalation flag here on purpose. Model escalation ships as
@@ -88,8 +95,13 @@ export function loadConfig(cwd = process.cwd()) {
   if (fromFile.priming === undefined) {
     config.priming = envBool('CLAUDE_PLUGIN_OPTION_PRIMING', DEFAULTS.priming);
   }
+  // The settings panel can only offer yes or no, so yes means the high impact
+  // set. Anyone wanting all of them says so in .guardrails-js.json.
   if (fromFile.performance === undefined) {
-    config.performance = envBool('CLAUDE_PLUGIN_OPTION_PERFORMANCE', DEFAULTS.performance);
+    config.performance = envBool('CLAUDE_PLUGIN_OPTION_PERFORMANCE', true) ? 'high' : 'off';
+  }
+  if (fromFile.report === undefined) {
+    config.report = envBool('CLAUDE_PLUGIN_OPTION_REPORT', DEFAULTS.report);
   }
 
   // Nothing validates a value coming from settings or the environment, so a
@@ -119,13 +131,29 @@ export function loadConfig(cwd = process.cwd()) {
   return config;
 }
 
+/** off, high, or all. Accepts booleans because the settings panel sends those. */
+export function performanceMode(config) {
+  const value = config.performance;
+  if (value === false || value === 'off' || value === 'none') return 'off';
+  if (value === 'all' || value === 'low') return 'all';
+  return 'high';
+}
+
 /**
- * Should this finding be shown? Performance answers to its own switch, and
- * everything else answers to the severity floor.
+ * Should this finding be shown?
+ *
+ * Performance answers to its own switch and never to the security floor, so
+ * raising the floor cannot hide a whole pack. Within performance, impact
+ * decides: 'high' is the set that reliably bites, 'low' is the set that depends
+ * on data the analyzer cannot see.
  */
-export function shouldReport(severity, config) {
-  if (severity === 'perf') return config.performance !== false;
-  return meetsMinSeverity(severity, config.minSeverity);
+export function shouldReport(severity, config, impact = 'high') {
+  if (severity !== 'perf') return meetsMinSeverity(severity, config.minSeverity);
+
+  const mode = performanceMode(config);
+  if (mode === 'off') return false;
+  if (mode === 'all') return true;
+  return impact !== 'low';
 }
 
 export function meetsMinSeverity(severity, minSeverity) {

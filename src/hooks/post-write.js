@@ -72,7 +72,7 @@ function checkManifest(filePath, input) {
   if (findings.length === 0) return;
 
   applyLoopGuard(findings, input.session_id, 'package.json');
-  appendReport(projectRoot, 'package.json', findings);
+  if (config.report !== false) appendReport(projectRoot, 'package.json', findings);
 
   const { loud, quiet } = splitBySeverity(findings);
 
@@ -148,7 +148,7 @@ export function main() {
   if (findings.length === 0) return;
 
   applyLoopGuard(findings, input.session_id, relative);
-  appendReport(projectRoot, relative, findings);
+  if (config.report !== false) appendReport(projectRoot, relative, findings);
 
   const { loud, quiet } = splitBySeverity(findings);
 

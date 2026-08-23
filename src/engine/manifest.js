@@ -98,7 +98,7 @@ export function runManifestRules(projectRoot, config, pkg = null, rules = supply
     if (!hit) continue;
 
     const severity = config.severityFor({ ...rule, severity: hit.severityHint ?? rule.severity });
-    if (!shouldReport(severity, config)) continue;
+    if (!shouldReport(severity, config, rule.impact)) continue;
 
     findings.push({
       ruleId: rule.id,

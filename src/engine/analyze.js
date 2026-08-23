@@ -185,7 +185,7 @@ export function analyze(options) {
       if (suppressions.isSuppressed(rule.id, line)) continue;
 
       const severity = config.severityFor({ ...rule, severity: hit.severityHint ?? rule.severity });
-      if (!shouldReport(severity, config)) continue;
+      if (!shouldReport(severity, config, rule.impact)) continue;
 
       findings.push({
         ruleId: rule.id,
@@ -238,7 +238,7 @@ export function analyze(options) {
           ...rule,
           severity: hit.severityHint ?? rule.severity,
         });
-        if (!shouldReport(severity, config)) continue;
+        if (!shouldReport(severity, config, rule.impact)) continue;
 
         findings.push({
           ruleId: rule.id,
@@ -284,7 +284,7 @@ export function analyze(options) {
         ...rule,
         severity: hit.severityHint ?? rule.severity,
       });
-      if (!shouldReport(severity, config)) continue;
+      if (!shouldReport(severity, config, rule.impact)) continue;
 
       findings.push({
         ruleId: rule.id,

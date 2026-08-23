@@ -1,7 +1,7 @@
 {
   "name": "guardrails-js",
   "displayName": "guardrails-js",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Tells Claude when the JavaScript it wrote is unsafe or slow, so it fixes it in the same turn. Node, React, Next, Vue, Nuxt, Angular, Svelte, NestJS, tRPC. No Python, no model calls.",
   "author": {
     "name": "Subhash Dasyam",
@@ -29,13 +29,19 @@
     "network": {
       "type": "boolean",
       "title": "Check packages online before installing",
-      "description": "Asks osv.dev and the npm registry about a package before it installs, which catches a known vulnerable version of a package you already trust. Package names leave your machine. The offline checks keep working when this is off.",
+      "description": "Asks osv.dev and the npm registry about a package before it installs, which catches a known vulnerable version of a package you already trust. Package names leave your machine. Offline checks keep working when this is off.",
       "default": true
     },
     "performance": {
       "type": "boolean",
       "title": "Report performance findings",
-      "description": "Sync work in request handlers, N+1 queries, unbounded fan out, React and Vue render traps. These never interrupt and arrive as quiet notes. Turn off if you only want security findings.",
+      "description": "The ones that reliably bite: sync work in a request handler, N+1 queries, unbounded fan out, lost stream backpressure, unstable list keys. They never interrupt and never fail a build. Set performance to all in .guardrails-js.json for the softer ones too.",
+      "default": true
+    },
+    "report": {
+      "type": "boolean",
+      "title": "Save a report file",
+      "description": "Appends every finding to .claude/guardrails-js-report.md so you can read back what was flagged this session. Turn off if you would rather nothing was written to the project.",
       "default": true
     },
     "priming": {

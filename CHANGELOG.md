@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.0
+
+Performance findings are now graded, and there is a switch for the report file.
+
+The pack was all or nothing, which meant turning it on brought findings whose cost depends on data the analyzer cannot see. Every performance rule now declares an impact. Nine are high: sync work in a request handler, N+1 queries, unbounded fan out, lost stream backpressure, async forEach, unbounded caches, and unstable list keys in React and Vue. Four are low: a sequential await loop, a fresh prop passed to a memoized child, derived state in an effect, and v-for beside v-if.
+
+Saying yes in the install panel reports the high set, which is the default. Anyone who wants the rest sets performance to all in .guardrails-js.json, and false still turns the lot off.
+
+The install panel now asks four yes or no questions rather than three. The new one saves the report file at .claude/guardrails-js-report.md, and answering no means nothing is written into your project.
+
+Defaults, all together: security floor medium, online checks on, report file on, performance on at high impact.
+
 ## 1.2.1
 
 Finishes separating performance findings from security findings.

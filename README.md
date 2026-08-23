@@ -306,7 +306,9 @@ Version checks read the lockfile when there is one, because that is the version 
 <details>
 <summary><b>🐌 Performance traps</b></summary>
 
-**These are not on the security severity scale, and no security setting can switch them off.** They report by default, always arrive on the quiet channel, never interrupt, and never fail a CI build, because whether they matter depends on data the analyzer cannot see.
+**These are not on the security severity scale, and no security setting can switch them off.** They report by default, always arrive on the quiet channel, never interrupt, and never fail a CI build.
+
+They come in two sets. The nine marked high report by default because they bite regardless of how the code is used. The four marked low need `"performance": "all"`, because whether they cost anything depends on data the analyzer cannot see.
 
 | Rule | What it catches |
 |---|---|
@@ -346,12 +348,13 @@ Rules that would need to reason across functions to be certain, such as IDOR-01,
 
 ## 🔧 Configuration
 
-Installing asks three questions. All three are yes or no, all three default to yes, and pressing through without reading gets you sensible behaviour:
+Installing asks four questions. All four are yes or no, all four default to yes, and pressing through without reading gets sensible behaviour:
 
 | Question | Default | What no does |
 |---|---|---|
 | Check packages online before installing | Yes | Skips osv.dev and the registry. Offline checks keep working |
-| Report performance findings | Yes | Only security findings. Never interrupts either way |
+| Report performance findings | Yes | Only security findings |
+| Save a report file | Yes | Nothing is written into your project |
 | Send rules at session start | Yes | Saves about a thousand tokens per session |
 
 Everything else lives in an optional `.guardrails-js.json` in your project root, which nobody is prompted for:
@@ -369,6 +372,8 @@ Everything else lives in an optional `.guardrails-js.json` in your project root,
 ```
 
 `minSeverity` is one of `low`, `medium`, `high`, `critical` and covers security findings only. It defaults to `medium`, which hides two low severity rules. Performance findings are not on that scale and answer to `performance` instead, so raising the floor cannot switch them off by accident.
+
+`performance` takes `"high"` (the default), `"all"`, or `false`. Saying yes in the install panel means `"high"`, which is the nine findings that reliably bite: sync work in a request handler, N+1 queries, unbounded fan out, lost stream backpressure, async `forEach`, unbounded caches, unstable list keys. `"all"` adds the four whose cost depends on data the analyzer cannot see, such as whether a render is actually slow or whether a sequential loop was deliberate.
 
 To silence one line, say why:
 
