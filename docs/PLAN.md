@@ -52,7 +52,7 @@ The plan targeted about 60 enforced rules. What shipped:
 
 Rules come in three shapes. Most take an AST node. Vue template rules take a scanned element. Supply chain rules take a project.
 
-Measured on the development machine: 37 ms for a clean file, 49 ms when a rule fires, against budgets of 60 ms and 140 ms. The tool reports nothing against its own source, with two documented suppressions where the hook reads back the file it was told about.
+The latency gate measures differences rather than wall clock, because the absolute varies by machine more than the plugin does. Against a bare node process: 20 ms to load the bundle, 2 ms to scan a clean file, 15 ms to scan one with findings. End to end a write costs about 37 ms on a development machine and about 55 ms on a shared CI runner, most of it Node starting up. The tool reports nothing against its own source, with two documented suppressions where the hook reads back the file it was told about.
 
 ### Everything else verified against the code
 

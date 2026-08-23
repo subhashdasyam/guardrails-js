@@ -249,7 +249,7 @@ node test/hooks.contract.mjs
 
 Every rule needs one case that must fire and at least two safe lookalikes that must not, in `test/cases/`. On top of that, `test/corpus/` holds correct code full of near misses, and any finding there fails the build. That gate is what stops the rule set turning into noise.
 
-Measured on this machine: 34 ms for a clean file, 48 ms when a rule fires. Most of that is Node starting up.
+The latency gate measures the plugin, not the machine, because absolute wall clock varies by more than the thing being measured. It compares against a bare node process and against the hook loading and exiting early. On a development machine: 20 ms to load the bundle, 2 ms to scan a clean file, 15 ms to scan one with findings. Node startup accounts for the rest of the roughly 37 ms a write costs end to end.
 
 ## What is next
 

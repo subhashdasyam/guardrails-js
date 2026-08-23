@@ -63,4 +63,4 @@ The prompt tells it to refute by default and stay silent unless it can name a li
 
 ### Verification
 
-309 unit tests, 17 hook contract tests, a clean code corpus where any finding fails the build, and a latency budget. Measured at 37 ms for a clean file and 49 ms when a rule fires, most of it Node starting up. The tool reports nothing against its own source.
+309 unit tests, 17 hook contract tests, a clean code corpus where any finding fails the build, and a latency budget. The latency gate measures the plugin rather than the machine: 20 ms to load the bundle over a bare node process, 2 ms to scan a clean file, 15 ms to scan one with findings. The tool reports nothing against its own source.
