@@ -46,6 +46,7 @@ function allDependencies(pkg) {
 // src/engine/config.js
 import fs2 from "node:fs";
 import path2 from "node:path";
+var SEVERITY_ORDER = ["perf", "low", "medium", "high", "critical"];
 var DEFAULTS = {
   severityOverrides: {},
   disableRules: [],
@@ -124,6 +125,12 @@ function loadConfig(cwd = process.cwd()) {
     return rule.severity;
   };
   return config;
+}
+function meetsMinSeverity(severity, minSeverity) {
+  const have = SEVERITY_ORDER.indexOf(severity);
+  const need = SEVERITY_ORDER.indexOf(minSeverity);
+  if (have === -1 || need === -1) return true;
+  return have >= need;
 }
 
 // src/priming/packs.js
@@ -243,9 +250,9 @@ function resetSession(sessionId) {
   }
 }
 
-// src/supply-chain/signals.js
-import fs4 from "node:fs";
-import path4 from "node:path";
+// src/engine/manifest.js
+import fs5 from "node:fs";
+import path5 from "node:path";
 
 // src/supply-chain/data/denylist.json
 var denylist_default = {
@@ -342,362 +349,122 @@ var denylist_default = {
   ]
 };
 
-// src/supply-chain/data/top-packages.json
-var top_packages_default = {
-  note: "Popular package names used for two things: typosquat distance, and deciding whether a name Claude produced is real. Refreshed by .github/workflows/threat-data.yml. A name missing from this list is not proof of anything, it only lowers confidence.",
-  updated: "2026-08-23",
-  names: [
-    "react",
-    "react-dom",
-    "react-router",
-    "react-router-dom",
-    "react-redux",
-    "redux",
-    "@reduxjs/toolkit",
-    "next",
-    "nuxt",
-    "vue",
-    "vue-router",
-    "pinia",
-    "vuex",
-    "svelte",
-    "@sveltejs/kit",
-    "angular",
-    "@angular/core",
-    "solid-js",
-    "preact",
-    "astro",
-    "express",
-    "fastify",
-    "koa",
-    "hapi",
-    "@hapi/hapi",
-    "restify",
-    "@nestjs/core",
-    "@nestjs/common",
-    "hono",
-    "elysia",
-    "polka",
-    "connect",
-    "body-parser",
-    "cookie-parser",
-    "cors",
-    "helmet",
-    "morgan",
-    "compression",
-    "multer",
-    "express-session",
-    "express-rate-limit",
-    "csurf",
-    "passport",
-    "passport-jwt",
-    "passport-local",
-    "lodash",
-    "underscore",
-    "ramda",
-    "immer",
-    "rxjs",
-    "date-fns",
-    "dayjs",
-    "moment",
-    "luxon",
-    "uuid",
-    "nanoid",
-    "chalk",
-    "colors",
-    "picocolors",
-    "kleur",
-    "debug",
-    "commander",
-    "yargs",
-    "inquirer",
-    "prompts",
-    "ora",
-    "boxen",
-    "figlet",
-    "cli-table3",
-    "axios",
-    "node-fetch",
-    "got",
-    "undici",
-    "superagent",
-    "ky",
-    "cross-fetch",
-    "request",
-    "ws",
-    "socket.io",
-    "socket.io-client",
-    "graphql",
-    "apollo-server",
-    "@apollo/client",
-    "@apollo/server",
-    "@trpc/server",
-    "@trpc/client",
-    "graphql-yoga",
-    "mongoose",
-    "mongodb",
-    "sequelize",
-    "typeorm",
-    "prisma",
-    "@prisma/client",
-    "knex",
-    "drizzle-orm",
-    "pg",
-    "mysql",
-    "mysql2",
-    "sqlite3",
-    "better-sqlite3",
-    "redis",
-    "ioredis",
-    "typescript",
-    "ts-node",
-    "tsx",
-    "esbuild",
-    "vite",
-    "webpack",
-    "rollup",
-    "parcel",
-    "babel",
-    "@babel/core",
-    "@babel/parser",
-    "@babel/preset-env",
-    "swc",
-    "@swc/core",
-    "turbo",
-    "nx",
-    "tsup",
-    "rimraf",
-    "cross-env",
-    "concurrently",
-    "nodemon",
-    "pm2",
-    "eslint",
-    "prettier",
-    "stylelint",
-    "husky",
-    "lint-staged",
-    "commitlint",
-    "jest",
-    "vitest",
-    "mocha",
-    "chai",
-    "sinon",
-    "ava",
-    "tap",
-    "jasmine",
-    "karma",
-    "cypress",
-    "playwright",
-    "@playwright/test",
-    "puppeteer",
-    "testing-library",
-    "@testing-library/react",
-    "@testing-library/jest-dom",
-    "supertest",
-    "nock",
-    "msw",
-    "tailwindcss",
-    "postcss",
-    "autoprefixer",
-    "sass",
-    "less",
-    "styled-components",
-    "@emotion/react",
-    "@emotion/styled",
-    "clsx",
-    "classnames",
-    "framer-motion",
-    "@mui/material",
-    "antd",
-    "bootstrap",
-    "bulma",
-    "chakra-ui",
-    "@chakra-ui/react",
-    "zod",
-    "yup",
-    "joi",
-    "ajv",
-    "class-validator",
-    "class-transformer",
-    "superstruct",
-    "valibot",
-    "io-ts",
-    "jsonwebtoken",
-    "jose",
-    "bcrypt",
-    "bcryptjs",
-    "argon2",
-    "crypto-js",
-    "node-forge",
-    "dotenv",
-    "dotenv-expand",
-    "config",
-    "convict",
-    "env-var",
-    "winston",
-    "pino",
-    "bunyan",
-    "loglevel",
-    "signale",
-    "consola",
-    "fs-extra",
-    "glob",
-    "globby",
-    "chokidar",
-    "minimatch",
-    "picomatch",
-    "fast-glob",
-    "path-to-regexp",
-    "qs",
-    "query-string",
-    "url-parse",
-    "normalize-url",
-    "js-yaml",
-    "yaml",
-    "toml",
-    "ini",
-    "papaparse",
-    "csv-parse",
-    "xml2js",
-    "fast-xml-parser",
-    "cheerio",
-    "jsdom",
-    "happy-dom",
-    "linkedom",
-    "dompurify",
-    "isomorphic-dompurify",
-    "sanitize-html",
-    "marked",
-    "markdown-it",
-    "remark",
-    "rehype",
-    "gray-matter",
-    "sharp",
-    "jimp",
-    "canvas",
-    "pdfkit",
-    "pdf-lib",
-    "exceljs",
-    "xlsx",
-    "archiver",
-    "adm-zip",
-    "tar",
-    "unzipper",
-    "yauzl",
-    "extract-zip",
-    "nodemailer",
-    "sendgrid",
-    "@sendgrid/mail",
-    "twilio",
-    "stripe",
-    "@stripe/stripe-js",
-    "aws-sdk",
-    "@aws-sdk/client-s3",
-    "firebase",
-    "firebase-admin",
-    "@supabase/supabase-js",
-    "@google-cloud/storage",
-    "@azure/storage-blob",
-    "@octokit/rest",
-    "bull",
-    "bullmq",
-    "agenda",
-    "node-cron",
-    "cron",
-    "p-limit",
-    "p-queue",
-    "p-retry",
-    "async",
-    "bluebird",
-    "eventemitter3",
-    "rxjs-compat",
-    "semver",
-    "minimist",
-    "arg",
-    "dedent",
-    "strip-ansi",
-    "ansi-styles",
-    "wrap-ansi",
-    "supports-color",
-    "color-convert",
-    "color-name",
-    "is-arrayish",
-    "error-ex",
-    "esbuild-register",
-    "tslib",
-    "core-js",
-    "regenerator-runtime",
-    "polyfill",
-    "@types/node",
-    "@types/react",
-    "@types/express",
-    "@types/jest",
-    "@types/lodash",
-    "openai",
-    "@anthropic-ai/sdk",
-    "langchain",
-    "@langchain/core",
-    "ollama",
-    "@modelcontextprotocol/sdk",
-    "ai",
-    "tiktoken",
-    "gpt-3-encoder",
-    "three",
-    "d3",
-    "chart.js",
-    "recharts",
-    "echarts",
-    "plotly.js",
-    "leaflet",
-    "mapbox-gl",
-    "monaco-editor",
-    "codemirror",
-    "prismjs",
-    "highlight.js",
-    "shiki",
-    "electron",
-    "electron-builder",
-    "tauri",
-    "@tauri-apps/api",
-    "capacitor",
-    "react-native",
-    "expo",
-    "@react-navigation/native",
-    "react-hook-form",
-    "formik",
-    "swr",
-    "@tanstack/react-query",
-    "react-query",
-    "zustand",
-    "jotai",
-    "valtio",
-    "mobx",
-    "storybook",
-    "@storybook/react",
-    "husky-init",
-    "npm-run-all",
-    "wait-on",
-    "serve",
-    "http-server",
-    "live-server",
-    "browser-sync",
-    "localtunnel",
-    "ngrok"
-  ]
+// src/rules/supply/manifest.js
+var CI_INSTALL = /\bnpm\s+install\b|\bnpm\s+i\b(?!\w)/;
+var SUPPLY_LOCK = {
+  id: "SUPPLY-LOCK",
+  title: "Dependency versions are not pinned by a lockfile",
+  severity: "medium",
+  owasp2025: "A03",
+  cwe: ["CWE-1357", "CWE-829"],
+  target: "manifest",
+  matchManifest(ctx) {
+    const problems = [];
+    if (!ctx.hasLockfile) {
+      problems.push("there is no lockfile, so nothing records the exact versions that were installed");
+    }
+    if (/^\s*package-lock\s*=\s*false/im.test(ctx.npmrc)) {
+      problems.push(".npmrc sets package-lock=false, which turns lockfile writing off");
+    }
+    for (const [name, body] of Object.entries(ctx.pkg?.scripts ?? {})) {
+      if (typeof body !== "string") continue;
+      if (!CI_INSTALL.test(body)) continue;
+      if (/--no-package-lock/.test(body)) {
+        problems.push(`the "${name}" script passes --no-package-lock`);
+      }
+    }
+    if (problems.length === 0) return null;
+    return { problems };
+  },
+  message: (f) => {
+    const joined = f.problems.join(", and ");
+    return `${joined.charAt(0).toUpperCase()}${joined.slice(1)}. Without a lockfile every install can resolve to a different tree, so a compromised release reaches you silently and nobody can tell what you shipped.`;
+  },
+  fix: "npm install once, commit package-lock.json, then use npm ci everywhere else."
 };
-
-// src/supply-chain/signals.js
-var TOP_NAMES = new Set(top_packages_default.names);
-var SUSPICIOUS = new Set(denylist_default.suspiciousNames);
-function hasLockfile(projectRoot) {
-  return ["package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"].some(
-    (file) => fs4.existsSync(path4.join(projectRoot, file))
-  );
-}
+var SUPPLY_SCRIPTS = {
+  id: "SUPPLY-SCRIPTS",
+  title: "Install scripts are allowed to run",
+  severity: "medium",
+  owasp2025: "A03",
+  cwe: ["CWE-829", "CWE-94"],
+  target: "manifest",
+  matchManifest(ctx) {
+    const dependencyCount = Object.keys(ctx.pkg?.dependencies ?? {}).length + Object.keys(ctx.pkg?.devDependencies ?? {}).length;
+    if (dependencyCount === 0) return null;
+    if (/^\s*ignore-scripts\s*=\s*true/im.test(ctx.npmrc)) return null;
+    const scripts = Object.entries(ctx.pkg?.scripts ?? {});
+    const guarded = scripts.some(
+      ([, body]) => typeof body === "string" && /--ignore-scripts/.test(body)
+    );
+    if (guarded) return null;
+    const ownHooks = scripts.filter(([name]) => /^(pre|post)?install$/.test(name) || name === "prepare").map(([name]) => name);
+    return { dependencyCount, ownHooks };
+  },
+  message: (f) => `Nothing in this project disables install scripts, and there are ${f.dependencyCount} dependencies.${f.ownHooks.length > 0 ? ` This package also defines ${f.ownHooks.join(" and ")}.` : ""} Installing runs code from every package in the tree with your permissions, before you have read any of it.`,
+  fix: "npm config set ignore-scripts true --location=project\n# then run the few packages that genuinely need a build step on purpose"
+};
+var SUPPLY_DENY = {
+  id: "SUPPLY-DENY",
+  title: "A known compromised release is installed",
+  severity: "critical",
+  owasp2025: "A03",
+  cwe: ["CWE-506", "CWE-829"],
+  target: "manifest",
+  matchManifest(ctx) {
+    const hits = [];
+    for (const [name, version] of ctx.locked) {
+      const entry = denylist_default.packages[name];
+      if (!entry) continue;
+      if (!entry.versions.includes(version)) continue;
+      hits.push({ name, version, incident: denylist_default.incidents[entry.incident] });
+    }
+    for (const [name, range] of Object.entries({
+      ...ctx.pkg?.dependencies ?? {},
+      ...ctx.pkg?.devDependencies ?? {}
+    })) {
+      if (ctx.locked.has(name)) continue;
+      const entry = denylist_default.packages[name];
+      if (!entry) continue;
+      const exact = /^\d+\.\d+\.\d+$/.test(String(range).trim()) ? String(range).trim() : null;
+      if (!exact || !entry.versions.includes(exact)) continue;
+      hits.push({ name, version: exact, incident: denylist_default.incidents[entry.incident] });
+    }
+    if (hits.length === 0) return null;
+    return { hits };
+  },
+  message: (f) => {
+    const listed = f.hits.map((hit) => `${hit.name}@${hit.version}`).join(", ");
+    const why = f.hits[0].incident?.description ?? "Published with malicious code.";
+    return `${listed} is a release known to have shipped malicious code. ${why} Assume anything this machine could read has been taken.`;
+  },
+  fix: "Upgrade past the affected version, delete node_modules, reinstall from a clean checkout, and rotate every npm, cloud, and git credential this machine has touched."
+};
+var VERIFIES_PROVENANCE = /npm\s+audit\s+signatures|--provenance|cosign\s+verify|slsa-verifier|sigstore/;
+var SUPPLY_PROV = {
+  id: "SUPPLY-PROV",
+  title: "Package signatures are never verified",
+  severity: "low",
+  owasp2025: "A03",
+  cwe: ["CWE-345", "CWE-494"],
+  target: "manifest",
+  matchManifest(ctx) {
+    const dependencyCount = Object.keys(ctx.pkg?.dependencies ?? {}).length;
+    if (dependencyCount === 0) return null;
+    const scripts = Object.values(ctx.pkg?.scripts ?? {}).join("\n");
+    if (VERIFIES_PROVENANCE.test(scripts)) return null;
+    const workflows = ctx.read(".github/workflows");
+    if (workflows && VERIFIES_PROVENANCE.test(workflows)) return null;
+    return { dependencyCount };
+  },
+  message: (f) => `Nothing in this project ever checks that its ${f.dependencyCount} dependencies came from where they claim. Registry signatures and provenance attestations exist and go unread unless something asks for them.`,
+  fix: "npm audit signatures\n# add it to CI, so a tampered tarball fails the build rather than shipping"
+};
+var manifest_default = [SUPPLY_LOCK, SUPPLY_SCRIPTS, SUPPLY_DENY, SUPPLY_PROV];
 
 // src/supply-chain/dependencies.js
-import fs5 from "node:fs";
-import path5 from "node:path";
+import fs4 from "node:fs";
+import path4 from "node:path";
 
 // src/supply-chain/data/framework-advisories.json
 var framework_advisories_default = {
@@ -815,7 +582,7 @@ function readLockedVersions(projectRoot) {
   for (const file of ["package-lock.json", "npm-shrinkwrap.json"]) {
     let lock;
     try {
-      lock = JSON.parse(fs5.readFileSync(path5.join(projectRoot, file), "utf8"));
+      lock = JSON.parse(fs4.readFileSync(path4.join(projectRoot, file), "utf8"));
     } catch {
       continue;
     }
@@ -940,33 +707,97 @@ function describeDependencyFinding(finding) {
   return `${finding.ruleId} ${version}: ${finding.title} (${finding.advisory}). ${finding.summary} ${fix} ${finding.action}`;
 }
 
+// src/engine/manifest.js
+var LOCKFILES = ["package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"];
+function readText(file) {
+  try {
+    return fs5.readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
+function makeReader(projectRoot) {
+  return (relative) => {
+    const target = path5.join(projectRoot, relative);
+    let stats;
+    try {
+      stats = fs5.statSync(target);
+    } catch {
+      return "";
+    }
+    if (stats.isFile()) return readText(target);
+    if (!stats.isDirectory()) return "";
+    try {
+      return fs5.readdirSync(target).filter((name) => /\.(ya?ml|json|sh|toml)$/i.test(name)).map((name) => readText(path5.join(target, name))).join("\n");
+    } catch {
+      return "";
+    }
+  };
+}
+function manifestContext(projectRoot, pkg = null) {
+  const read = makeReader(projectRoot);
+  let manifest = pkg;
+  if (!manifest) {
+    try {
+      manifest = JSON.parse(readText(path5.join(projectRoot, "package.json")));
+    } catch {
+      manifest = null;
+    }
+  }
+  const lockfileName = LOCKFILES.find((name) => fs5.existsSync(path5.join(projectRoot, name))) ?? null;
+  return {
+    projectRoot,
+    pkg: manifest,
+    locked: readLockedVersions(projectRoot),
+    npmrc: read(".npmrc"),
+    hasLockfile: Boolean(lockfileName),
+    lockfileName,
+    read
+  };
+}
+function runManifestRules(projectRoot, config, pkg = null, rules = manifest_default) {
+  const ctx = manifestContext(projectRoot, pkg);
+  if (!ctx.pkg) return [];
+  const findings = [];
+  for (const rule of rules) {
+    if (config.isRuleDisabled(rule.id)) continue;
+    let hit;
+    try {
+      hit = rule.matchManifest(ctx);
+    } catch {
+      continue;
+    }
+    if (!hit) continue;
+    const severity = config.severityFor({ ...rule, severity: hit.severityHint ?? rule.severity });
+    if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+    findings.push({
+      ruleId: rule.id,
+      title: rule.title,
+      severity,
+      owasp2025: rule.owasp2025,
+      cwe: rule.cwe ?? [],
+      api: rule.api ?? null,
+      line: 1,
+      column: 1,
+      evidence: ctx.lockfileName ? `package.json, ${ctx.lockfileName}` : "package.json",
+      message: typeof rule.message === "function" ? rule.message(hit) : rule.message,
+      fix: rule.fix,
+      filePath: "package.json"
+    });
+  }
+  const order = { critical: 0, high: 1, medium: 2, low: 3, perf: 4 };
+  findings.sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9));
+  return findings;
+}
+
 // src/hooks/session-start.js
-function baselineNotes(projectRoot, pkg) {
+function baselineNotes(projectRoot, pkg, config) {
   const notes = [];
-  if (pkg && !hasLockfile(projectRoot)) {
-    notes.push(
-      "This project has no lockfile. Run npm install once and commit package-lock.json, then use npm ci everywhere else."
-    );
+  for (const finding of runManifestRules(projectRoot, config, pkg)) {
+    notes.push(`${finding.ruleId} ${finding.message} Fix: ${finding.fix.split("\n")[0]}`);
   }
-  const locked = readLockedVersions(projectRoot);
-  for (const finding of checkDependencies(pkg, locked)) {
+  for (const finding of checkDependencies(pkg, readLockedVersions(projectRoot))) {
     notes.push(describeDependencyFinding(finding));
-  }
-  for (const [name, version] of locked) {
-    const entry = denylist_default.packages[name];
-    if (entry && entry.versions.includes(version)) {
-      const incident = denylist_default.incidents[entry.incident];
-      notes.push(
-        `${name}@${version} in the lockfile is a known compromised release. ${incident?.description ?? ""} Upgrade it and rotate any credentials this machine has touched.`
-      );
-    }
-  }
-  const scripts = pkg?.scripts ?? {};
-  for (const [name, body] of Object.entries(scripts)) {
-    if (typeof body !== "string") continue;
-    if (/\bnpm\s+install\b/.test(body) && !/--ignore-scripts/.test(body)) {
-      notes.push(`The "${name}" script runs npm install without --ignore-scripts.`);
-    }
   }
   return notes;
 }
@@ -977,11 +808,11 @@ function main() {
   const config = loadConfig(cwd);
   if (!config.priming) return;
   const { pkg, root } = readPackageJson(cwd);
-  const projectRoot = config.projectRoot || root || cwd;
+  const projectRoot = config.configFile ? config.projectRoot : root || cwd;
   if (!pkg) return;
   const dependencies = allDependencies(pkg);
   const packs = packsFor(dependencies);
-  const notes = baselineNotes(projectRoot, pkg);
+  const notes = baselineNotes(projectRoot, pkg, config);
   const parts = [
     `guardrails-js is active. Stack detected: ${stackLabel(dependencies)}.`,
     "",

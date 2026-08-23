@@ -31,7 +31,13 @@ function run(code, pkg = null, file = 'src/app.js') {
 
 test('every rule in the pack has a case', () => {
   const covered = new Set(cases.map((entry) => entry.rule));
-  const missing = RULES.map((rule) => rule.id).filter((id) => !covered.has(id));
+  const missing = RULES
+    // Manifest rules take a project rather than a source string, so they cannot
+    // use this harness. They are covered in supply.test.mjs against real
+    // directories, and that file asserts it covers all of them.
+    .filter((rule) => rule.target !== 'manifest')
+    .map((rule) => rule.id)
+    .filter((id) => !covered.has(id));
   assert.deepEqual(missing, [], `rules with no test case: ${missing.join(', ')}`);
 });
 
@@ -82,7 +88,12 @@ test('rule metadata is complete', () => {
     assert.ok(rule.owasp2025, `${rule.id} has no OWASP category`);
     assert.ok(Array.isArray(rule.cwe) && rule.cwe.length > 0, `${rule.id} has no CWE`);
     assert.ok(rule.fix, `${rule.id} has no fix`);
-    const matcher = rule.target === 'template' ? rule.matchTemplate : rule.match;
+    const matcher =
+      rule.target === 'template'
+        ? rule.matchTemplate
+        : rule.target === 'manifest'
+          ? rule.matchManifest
+          : rule.match;
     assert.ok(typeof matcher === 'function', `${rule.id} has no matcher`);
     assert.match(rule.owasp2025, /^A(0[1-9]|10)$/, `${rule.id} OWASP id looks wrong`);
   }

@@ -14614,8 +14614,8 @@ var require_lib = __commonJS({
 });
 
 // src/hooks/post-write.js
-import fs6 from "node:fs";
-import path7 from "node:path";
+import fs7 from "node:fs";
+import path8 from "node:path";
 
 // src/hooks/util.js
 import fs from "node:fs";
@@ -15573,7 +15573,9 @@ function analyze(options) {
     rules,
     wholeFile = false
   } = options;
-  const enabled = rules.filter((rule) => !config.isRuleDisabled(rule.id));
+  const enabled = rules.filter(
+    (rule) => rule.target !== "manifest" && !config.isRuleDisabled(rule.id)
+  );
   if (enabled.length === 0) return { findings: [] };
   const candidates = prefilter(source, enabled);
   if (candidates.length === 0) return { findings: [] };
@@ -15591,7 +15593,7 @@ function analyze(options) {
   const language = parsed.language ?? "js";
   const templateRules = isVue ? candidates.filter((rule) => rule.target === "template") : [];
   const active = candidates.filter(
-    (rule) => rule.target !== "template" && languageMatches(rule, language)
+    (rule) => rule.target !== "template" && rule.target !== "manifest" && languageMatches(rule, language)
   );
   if (active.length === 0 && templateRules.length === 0) return { findings: [] };
   const byNodeType = /* @__PURE__ */ new Map();
@@ -16124,6 +16126,305 @@ function describeDependencyFinding(finding) {
   const version = finding.exact ? `${finding.package}@${finding.installed}` : `${finding.package} (range allows ${finding.installed})`;
   const fix = finding.fixed ? `Upgrade to ${finding.fixed} or later.` : "This major version line has no fix. Move to a supported one.";
   return `${finding.ruleId} ${version}: ${finding.title} (${finding.advisory}). ${finding.summary} ${fix} ${finding.action}`;
+}
+
+// src/engine/manifest.js
+import fs6 from "node:fs";
+import path6 from "node:path";
+
+// src/supply-chain/data/denylist.json
+var denylist_default = {
+  note: "Known compromised npm releases. This list is a starting point, not full coverage. The scheduled CI job in .github/workflows/threat-data.yml refreshes it from OSV and GHSA, and live OSV lookups fill the gap between releases. Never treat an absence from this list as a clean bill of health.",
+  updated: "2026-08-23",
+  incidents: {
+    "chalk-debug-2025-09": {
+      description: "Maintainer account takeover on 8 September 2025. Popular colour and logging packages published with a browser wallet stealer.",
+      reference: "https://socket.dev/blog/npm-author-qix-compromised-in-major-supply-chain-attack"
+    },
+    "shai-hulud-2025-09": {
+      description: "Self replicating worm that stole npm and cloud credentials and republished itself into other packages.",
+      reference: "https://www.cisa.gov/news-events/alerts/2025/09/23/widespread-supply-chain-compromise-impacting-npm-ecosystem"
+    },
+    "shai-hulud-2025-11": {
+      description: "Second wave, added persistence through CI runners and public repositories.",
+      reference: "https://www.cisa.gov/news-events/alerts/2025/09/23/widespread-supply-chain-compromise-impacting-npm-ecosystem"
+    },
+    historical: {
+      description: "Earlier incidents kept because these exact versions still appear in old lockfiles.",
+      reference: "https://github.com/advisories"
+    }
+  },
+  packages: {
+    chalk: { versions: ["5.6.1"], incident: "chalk-debug-2025-09" },
+    debug: { versions: ["4.4.2"], incident: "chalk-debug-2025-09" },
+    "ansi-styles": { versions: ["6.2.2"], incident: "chalk-debug-2025-09" },
+    "strip-ansi": { versions: ["7.1.1"], incident: "chalk-debug-2025-09" },
+    "ansi-regex": { versions: ["6.2.1"], incident: "chalk-debug-2025-09" },
+    "wrap-ansi": { versions: ["9.0.1"], incident: "chalk-debug-2025-09" },
+    "slice-ansi": { versions: ["7.1.1"], incident: "chalk-debug-2025-09" },
+    "color-convert": { versions: ["3.1.1"], incident: "chalk-debug-2025-09" },
+    "color-name": { versions: ["2.0.1"], incident: "chalk-debug-2025-09" },
+    "color-string": { versions: ["2.1.1"], incident: "chalk-debug-2025-09" },
+    color: { versions: ["5.0.1"], incident: "chalk-debug-2025-09" },
+    "is-arrayish": { versions: ["0.3.3"], incident: "chalk-debug-2025-09" },
+    "error-ex": { versions: ["1.3.3"], incident: "chalk-debug-2025-09" },
+    "simple-swizzle": { versions: ["0.2.3"], incident: "chalk-debug-2025-09" },
+    "supports-color": { versions: ["10.2.1"], incident: "chalk-debug-2025-09" },
+    "supports-hyperlinks": { versions: ["4.1.1"], incident: "chalk-debug-2025-09" },
+    "has-ansi": { versions: ["6.0.1"], incident: "chalk-debug-2025-09" },
+    "chalk-template": { versions: ["1.1.1"], incident: "chalk-debug-2025-09" },
+    backslash: { versions: ["0.2.1"], incident: "chalk-debug-2025-09" },
+    "proto-tinker-wc": { versions: ["0.1.87"], incident: "chalk-debug-2025-09" },
+    "event-stream": { versions: ["3.3.6"], incident: "historical" },
+    "flatmap-stream": { versions: ["0.1.1", "0.1.2"], incident: "historical" },
+    "ua-parser-js": { versions: ["0.7.29", "0.8.0", "1.0.0"], incident: "historical" },
+    "node-ipc": { versions: ["10.1.1", "10.1.2", "10.1.3", "9.2.2"], incident: "historical" },
+    coa: { versions: ["2.0.3", "2.0.4", "2.1.1", "2.1.3", "3.0.1"], incident: "historical" },
+    rc: { versions: ["1.2.9", "1.3.9", "2.3.9"], incident: "historical" },
+    "eslint-scope": { versions: ["3.7.2"], incident: "historical" },
+    "eslint-config-eslint": { versions: ["5.0.2"], incident: "historical" },
+    "bootstrap-sass": { versions: ["3.2.0.3"], incident: "historical" },
+    "electron-native-notify": { versions: ["1.1.6"], incident: "historical" }
+  },
+  suspiciousNames: [
+    "crossenv",
+    "cross-env.js",
+    "d3.js",
+    "fabric-js",
+    "ffmepg",
+    "gruntcli",
+    "http-proxy.js",
+    "jquery.js",
+    "mariadb",
+    "mongose",
+    "mssql.js",
+    "mssql-node",
+    "mysqljs",
+    "node-fabric",
+    "node-opencv",
+    "node-opensl",
+    "node-openssl",
+    "node-sqlite",
+    "node-tkinter",
+    "nodecaffe",
+    "nodefabric",
+    "nodeffmpeg",
+    "nodemailer-js",
+    "nodemailer.js",
+    "nodemssql",
+    "noderequest",
+    "nodesass",
+    "nodesqlite",
+    "opencv.js",
+    "openssl.js",
+    "proxy.js",
+    "shadowsock",
+    "smb",
+    "sqlite.js",
+    "sqliter",
+    "sqlserver",
+    "tkinter"
+  ]
+};
+
+// src/rules/supply/manifest.js
+var CI_INSTALL = /\bnpm\s+install\b|\bnpm\s+i\b(?!\w)/;
+var SUPPLY_LOCK = {
+  id: "SUPPLY-LOCK",
+  title: "Dependency versions are not pinned by a lockfile",
+  severity: "medium",
+  owasp2025: "A03",
+  cwe: ["CWE-1357", "CWE-829"],
+  target: "manifest",
+  matchManifest(ctx) {
+    const problems = [];
+    if (!ctx.hasLockfile) {
+      problems.push("there is no lockfile, so nothing records the exact versions that were installed");
+    }
+    if (/^\s*package-lock\s*=\s*false/im.test(ctx.npmrc)) {
+      problems.push(".npmrc sets package-lock=false, which turns lockfile writing off");
+    }
+    for (const [name, body] of Object.entries(ctx.pkg?.scripts ?? {})) {
+      if (typeof body !== "string") continue;
+      if (!CI_INSTALL.test(body)) continue;
+      if (/--no-package-lock/.test(body)) {
+        problems.push(`the "${name}" script passes --no-package-lock`);
+      }
+    }
+    if (problems.length === 0) return null;
+    return { problems };
+  },
+  message: (f) => {
+    const joined = f.problems.join(", and ");
+    return `${joined.charAt(0).toUpperCase()}${joined.slice(1)}. Without a lockfile every install can resolve to a different tree, so a compromised release reaches you silently and nobody can tell what you shipped.`;
+  },
+  fix: "npm install once, commit package-lock.json, then use npm ci everywhere else."
+};
+var SUPPLY_SCRIPTS = {
+  id: "SUPPLY-SCRIPTS",
+  title: "Install scripts are allowed to run",
+  severity: "medium",
+  owasp2025: "A03",
+  cwe: ["CWE-829", "CWE-94"],
+  target: "manifest",
+  matchManifest(ctx) {
+    const dependencyCount = Object.keys(ctx.pkg?.dependencies ?? {}).length + Object.keys(ctx.pkg?.devDependencies ?? {}).length;
+    if (dependencyCount === 0) return null;
+    if (/^\s*ignore-scripts\s*=\s*true/im.test(ctx.npmrc)) return null;
+    const scripts = Object.entries(ctx.pkg?.scripts ?? {});
+    const guarded = scripts.some(
+      ([, body]) => typeof body === "string" && /--ignore-scripts/.test(body)
+    );
+    if (guarded) return null;
+    const ownHooks = scripts.filter(([name]) => /^(pre|post)?install$/.test(name) || name === "prepare").map(([name]) => name);
+    return { dependencyCount, ownHooks };
+  },
+  message: (f) => `Nothing in this project disables install scripts, and there are ${f.dependencyCount} dependencies.${f.ownHooks.length > 0 ? ` This package also defines ${f.ownHooks.join(" and ")}.` : ""} Installing runs code from every package in the tree with your permissions, before you have read any of it.`,
+  fix: "npm config set ignore-scripts true --location=project\n# then run the few packages that genuinely need a build step on purpose"
+};
+var SUPPLY_DENY = {
+  id: "SUPPLY-DENY",
+  title: "A known compromised release is installed",
+  severity: "critical",
+  owasp2025: "A03",
+  cwe: ["CWE-506", "CWE-829"],
+  target: "manifest",
+  matchManifest(ctx) {
+    const hits = [];
+    for (const [name, version] of ctx.locked) {
+      const entry = denylist_default.packages[name];
+      if (!entry) continue;
+      if (!entry.versions.includes(version)) continue;
+      hits.push({ name, version, incident: denylist_default.incidents[entry.incident] });
+    }
+    for (const [name, range] of Object.entries({
+      ...ctx.pkg?.dependencies ?? {},
+      ...ctx.pkg?.devDependencies ?? {}
+    })) {
+      if (ctx.locked.has(name)) continue;
+      const entry = denylist_default.packages[name];
+      if (!entry) continue;
+      const exact = /^\d+\.\d+\.\d+$/.test(String(range).trim()) ? String(range).trim() : null;
+      if (!exact || !entry.versions.includes(exact)) continue;
+      hits.push({ name, version: exact, incident: denylist_default.incidents[entry.incident] });
+    }
+    if (hits.length === 0) return null;
+    return { hits };
+  },
+  message: (f) => {
+    const listed = f.hits.map((hit) => `${hit.name}@${hit.version}`).join(", ");
+    const why = f.hits[0].incident?.description ?? "Published with malicious code.";
+    return `${listed} is a release known to have shipped malicious code. ${why} Assume anything this machine could read has been taken.`;
+  },
+  fix: "Upgrade past the affected version, delete node_modules, reinstall from a clean checkout, and rotate every npm, cloud, and git credential this machine has touched."
+};
+var VERIFIES_PROVENANCE = /npm\s+audit\s+signatures|--provenance|cosign\s+verify|slsa-verifier|sigstore/;
+var SUPPLY_PROV = {
+  id: "SUPPLY-PROV",
+  title: "Package signatures are never verified",
+  severity: "low",
+  owasp2025: "A03",
+  cwe: ["CWE-345", "CWE-494"],
+  target: "manifest",
+  matchManifest(ctx) {
+    const dependencyCount = Object.keys(ctx.pkg?.dependencies ?? {}).length;
+    if (dependencyCount === 0) return null;
+    const scripts = Object.values(ctx.pkg?.scripts ?? {}).join("\n");
+    if (VERIFIES_PROVENANCE.test(scripts)) return null;
+    const workflows = ctx.read(".github/workflows");
+    if (workflows && VERIFIES_PROVENANCE.test(workflows)) return null;
+    return { dependencyCount };
+  },
+  message: (f) => `Nothing in this project ever checks that its ${f.dependencyCount} dependencies came from where they claim. Registry signatures and provenance attestations exist and go unread unless something asks for them.`,
+  fix: "npm audit signatures\n# add it to CI, so a tampered tarball fails the build rather than shipping"
+};
+var manifest_default = [SUPPLY_LOCK, SUPPLY_SCRIPTS, SUPPLY_DENY, SUPPLY_PROV];
+
+// src/engine/manifest.js
+var LOCKFILES = ["package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"];
+function readText(file) {
+  try {
+    return fs6.readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
+function makeReader(projectRoot) {
+  return (relative) => {
+    const target = path6.join(projectRoot, relative);
+    let stats;
+    try {
+      stats = fs6.statSync(target);
+    } catch {
+      return "";
+    }
+    if (stats.isFile()) return readText(target);
+    if (!stats.isDirectory()) return "";
+    try {
+      return fs6.readdirSync(target).filter((name) => /\.(ya?ml|json|sh|toml)$/i.test(name)).map((name) => readText(path6.join(target, name))).join("\n");
+    } catch {
+      return "";
+    }
+  };
+}
+function manifestContext(projectRoot, pkg = null) {
+  const read = makeReader(projectRoot);
+  let manifest = pkg;
+  if (!manifest) {
+    try {
+      manifest = JSON.parse(readText(path6.join(projectRoot, "package.json")));
+    } catch {
+      manifest = null;
+    }
+  }
+  const lockfileName = LOCKFILES.find((name) => fs6.existsSync(path6.join(projectRoot, name))) ?? null;
+  return {
+    projectRoot,
+    pkg: manifest,
+    locked: readLockedVersions(projectRoot),
+    npmrc: read(".npmrc"),
+    hasLockfile: Boolean(lockfileName),
+    lockfileName,
+    read
+  };
+}
+function runManifestRules(projectRoot, config, pkg = null, rules = manifest_default) {
+  const ctx = manifestContext(projectRoot, pkg);
+  if (!ctx.pkg) return [];
+  const findings = [];
+  for (const rule of rules) {
+    if (config.isRuleDisabled(rule.id)) continue;
+    let hit;
+    try {
+      hit = rule.matchManifest(ctx);
+    } catch {
+      continue;
+    }
+    if (!hit) continue;
+    const severity = config.severityFor({ ...rule, severity: hit.severityHint ?? rule.severity });
+    if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+    findings.push({
+      ruleId: rule.id,
+      title: rule.title,
+      severity,
+      owasp2025: rule.owasp2025,
+      cwe: rule.cwe ?? [],
+      api: rule.api ?? null,
+      line: 1,
+      column: 1,
+      evidence: ctx.lockfileName ? `package.json, ${ctx.lockfileName}` : "package.json",
+      message: typeof rule.message === "function" ? rule.message(hit) : rule.message,
+      fix: rule.fix,
+      filePath: "package.json"
+    });
+  }
+  const order = { critical: 0, high: 1, medium: 2, low: 3, perf: 4 };
+  findings.sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9));
+  return findings;
+}
+function isManifestFile(filePath) {
+  const base = path6.basename(String(filePath));
+  return base === "package.json" || base === ".npmrc" || LOCKFILES.includes(base);
 }
 
 // src/rules/node-core/injection.js
@@ -17929,11 +18230,11 @@ var LINK_01 = {
 var xss_default = [XSS_01, XSS_02, XSS_05, XSS_06, MSG_01, LINK_01];
 
 // src/rules/react/next.js
-import path6 from "node:path";
+import path7 from "node:path";
 var AUTH_CALL = /\bauth\s*\(|getServerSession|getSession|currentUser|requireAuth|requireUser|getUser\s*\(|verifySession|assertAuthenticated|withAuth|clerkClient|getToken\s*\(/;
 var AUTHZ_TERM = /\brole\b|\bpermission\b|\bcan[A-Z]|\bisAdmin\b|\bownerId\b|\borgId\b|\btenantId\b/;
 function isMiddlewareFile(filePath) {
-  const base = path6.basename(String(filePath));
+  const base = path7.basename(String(filePath));
   return /^middleware\.(js|ts|mjs|cjs)$/.test(base);
 }
 var NEXT_MW = {
@@ -18575,38 +18876,52 @@ var PACKS = {
   react: [...xss_default, ...next_default],
   vue: [...vue_default],
   "perf-node": [...perf_default],
-  "perf-frontend": [...perf_default2]
+  "perf-frontend": [...perf_default2],
+  supply: [...manifest_default]
 };
 var RULES = Object.values(PACKS).flat();
 var RULES_BY_ID = new Map(RULES.map((rule) => [rule.id, rule]));
 
 // src/hooks/post-write.js
 var WATCHED_TOOLS = /* @__PURE__ */ new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-function checkManifest(filePath, input) {
-  const projectRoot = path7.dirname(filePath);
-  let pkg;
+function manifestPackage(projectRoot) {
   try {
-    pkg = JSON.parse(fs6.readFileSync(filePath, "utf8"));
+    return JSON.parse(fs7.readFileSync(path8.join(projectRoot, "package.json"), "utf8"));
   } catch {
-    return;
+    return null;
   }
+}
+function checkManifest(filePath, input) {
+  const projectRoot = path8.dirname(filePath);
+  const config = loadConfig(projectRoot);
+  let pkg = null;
+  if (path8.basename(filePath) === "package.json") {
+    try {
+      pkg = JSON.parse(fs7.readFileSync(filePath, "utf8"));
+    } catch {
+      return;
+    }
+  }
+  const findings = runManifestRules(projectRoot, config, pkg);
   const locked = readLockedVersions(projectRoot);
-  const matches = checkDependencies(pkg, locked);
-  if (matches.length === 0) return;
-  const findings = matches.map((match) => ({
-    ruleId: match.ruleId,
-    title: match.title,
-    severity: match.severity,
-    owasp2025: match.severity === "critical" || match.severity === "high" ? "A03" : "A03",
-    cwe: [],
-    api: null,
-    line: 1,
-    column: 1,
-    evidence: `${match.package}@${match.installed}`,
-    message: describeDependencyFinding(match),
-    fix: match.fixed ? `npm install ${match.package}@^${match.fixed}` : match.action,
-    filePath: "package.json"
-  }));
+  const matches = checkDependencies(pkg ?? manifestPackage(projectRoot), locked);
+  findings.push(
+    ...matches.map((match) => ({
+      ruleId: match.ruleId,
+      title: match.title,
+      severity: match.severity,
+      owasp2025: "A03",
+      cwe: [],
+      api: null,
+      line: 1,
+      column: 1,
+      evidence: `${match.package}@${match.installed}`,
+      message: describeDependencyFinding(match),
+      fix: match.fixed ? `npm install ${match.package}@^${match.fixed}` : match.action,
+      filePath: "package.json"
+    }))
+  );
+  if (findings.length === 0) return;
   applyLoopGuard(findings, input.session_id, "package.json");
   appendReport(projectRoot, "package.json", findings);
   const { loud, quiet } = splitBySeverity(findings);
@@ -18629,22 +18944,22 @@ function main() {
   if (!WATCHED_TOOLS.has(toolName)) return;
   const filePath = filePathFrom(input.tool_input);
   if (!filePath) return;
-  if (path7.basename(filePath) === "package.json") {
+  if (isManifestFile(filePath)) {
     checkManifest(filePath, input);
     return;
   }
-  const extension = path7.extname(filePath).toLowerCase();
+  const extension = path8.extname(filePath).toLowerCase();
   if (!SUPPORTED_EXTENSIONS.has(extension)) return;
   let source;
   try {
-    source = fs6.readFileSync(filePath, "utf8");
+    source = fs7.readFileSync(filePath, "utf8");
   } catch {
     return;
   }
   if (source.length > 2e6) return;
   const cwd = input.cwd || process.cwd();
-  const config = loadConfig(path7.dirname(filePath));
-  const { pkg, root } = readPackageJson(path7.dirname(filePath));
+  const config = loadConfig(path8.dirname(filePath));
+  const { pkg, root } = readPackageJson(path8.dirname(filePath));
   const projectRoot = config.projectRoot || root || cwd;
   const relative = relativeTo(projectRoot, filePath);
   if (isExcluded(relative, config)) return;

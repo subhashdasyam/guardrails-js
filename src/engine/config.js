@@ -25,11 +25,10 @@ const DEFAULTS = {
   minSeverity: 'perf',
 };
 
-// There used to be a modelEscalation flag here, for a planned hook that would
-// have asked a model to adjudicate findings the analyzer could not settle. It
-// was never built, and a config key that does nothing is a lie in a tool people
-// are meant to trust. Setting it in .guardrails-js.json is harmless and still
-// does nothing.
+// There is no modelEscalation flag here on purpose. Model escalation ships as
+// hooks/escalation.json, a prompt hook you add to your own settings, and
+// installing it is the switch. A config key would be a second source of truth
+// that could disagree with whether the hook is actually registered.
 
 function readJson(file) {
   try {

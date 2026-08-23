@@ -18,39 +18,58 @@ import {
   checkDependencies,
   describeDependencyFinding,
 } from '../supply-chain/dependencies.js';
+import { runManifestRules, isManifestFile } from '../engine/manifest.js';
 import { RULES } from '../rules/index.js';
 
 const WATCHED_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
+function manifestPackage(projectRoot) {
+  try {
+    // guardrails-js-ignore PATH-01 -- projectRoot is the directory of the file the harness said Claude wrote, and the filename here is a constant, so there is no attacker controlled segment to contain.
+    return JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 function checkManifest(filePath, input) {
   const projectRoot = path.dirname(filePath);
+  const config = loadConfig(projectRoot);
 
-  let pkg;
-  try {
-    // guardrails-js-ignore PATH-01 -- filePath is the file Claude Code just wrote, handed to us by the harness on stdin, and reading it back is the whole job. There is no root to contain it to.
-    pkg = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {
-    return;
+  let pkg = null;
+  if (path.basename(filePath) === 'package.json') {
+    try {
+      // guardrails-js-ignore PATH-01 -- filePath is the file Claude Code just wrote, handed to us by the harness on stdin, and reading it back is the whole job. There is no root to contain it to.
+      pkg = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch {
+      return;
+    }
   }
 
-  const locked = readLockedVersions(projectRoot);
-  const matches = checkDependencies(pkg, locked);
-  if (matches.length === 0) return;
+  // Supply chain rules first: they are about the project, not a version range.
+  const findings = runManifestRules(projectRoot, config, pkg);
 
-  const findings = matches.map((match) => ({
-    ruleId: match.ruleId,
-    title: match.title,
-    severity: match.severity,
-    owasp2025: match.severity === 'critical' || match.severity === 'high' ? 'A03' : 'A03',
-    cwe: [],
-    api: null,
-    line: 1,
-    column: 1,
-    evidence: `${match.package}@${match.installed}`,
-    message: describeDependencyFinding(match),
-    fix: match.fixed ? `npm install ${match.package}@^${match.fixed}` : match.action,
-    filePath: 'package.json',
-  }));
+  const locked = readLockedVersions(projectRoot);
+  const matches = checkDependencies(pkg ?? manifestPackage(projectRoot), locked);
+
+  findings.push(
+    ...matches.map((match) => ({
+      ruleId: match.ruleId,
+      title: match.title,
+      severity: match.severity,
+      owasp2025: 'A03',
+      cwe: [],
+      api: null,
+      line: 1,
+      column: 1,
+      evidence: `${match.package}@${match.installed}`,
+      message: describeDependencyFinding(match),
+      fix: match.fixed ? `npm install ${match.package}@^${match.fixed}` : match.action,
+      filePath: 'package.json',
+    })),
+  );
+
+  if (findings.length === 0) return;
 
   applyLoopGuard(findings, input.session_id, 'package.json');
   appendReport(projectRoot, 'package.json', findings);
@@ -86,9 +105,9 @@ export function main() {
   const filePath = filePathFrom(input.tool_input);
   if (!filePath) return;
 
-  // package.json is not code, but a version range is where the middleware
-  // bypass and the server component RCE live, so it gets its own path.
-  if (path.basename(filePath) === 'package.json') {
+  // package.json, .npmrc, and lockfiles are not code, but they decide what code
+  // gets installed and whether install scripts run, so they get their own path.
+  if (isManifestFile(filePath)) {
     checkManifest(filePath, input);
     return;
   }

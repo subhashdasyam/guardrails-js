@@ -11,6 +11,7 @@ import nextRules from './react/next.js';
 import vueRules from './vue/vue.js';
 import perfNode from './perf-node/perf.js';
 import perfFrontend from './perf-react/perf.js';
+import supply from './supply/manifest.js';
 
 export const PACKS = {
   'node-core': [...injection, ...ssrf, ...deserialization, ...secretsConfig, ...prototypePollution],
@@ -20,6 +21,7 @@ export const PACKS = {
   vue: [...vueRules],
   'perf-node': [...perfNode],
   'perf-frontend': [...perfFrontend],
+  supply: [...supply],
 };
 
 export const RULES = Object.values(PACKS).flat();

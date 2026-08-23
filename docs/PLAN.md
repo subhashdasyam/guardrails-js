@@ -2,7 +2,7 @@
 
 ## Build status
 
-v1.0 is built and tested: the engine, all three hooks, 74 rules across seven packs, four dependency version advisories, the npm install gate, session priming, suppression, the loop guard, the report file, both slash commands, all three skills, the CI binary, and the workflows. See [CHANGELOG.md](../CHANGELOG.md).
+v1.0 is built and tested: the engine, all three hooks, 78 rules across eight packs, four dependency version advisories, the npm install gate, session priming, suppression, the loop guard, the report file, both slash commands, all three skills, the CI binary, and the workflows. See [CHANGELOG.md](../CHANGELOG.md).
 
 The rule inventory further down was written before any code existed. The section below is what actually shipped, and the plan text is left as written so the reasoning stays visible.
 
@@ -20,12 +20,22 @@ The false-positive corpus caught four, all fixed: `new URL(req.body.url)` treate
 
 Two findings in its own source turned out to be real and now carry suppressions with written reasons. CI fails the build if the self-audit ever stops being clean.
 
-### What the plan asked for and did not get built
+### Built after the first pass through this plan
 
-1. **Optional model escalation.** The decision table below promises a `prompt`-type hook that adjudicates unresolved medium authz and IDOR findings when `modelEscalation` is on. The config flag exists and nothing reads it. The deterministic core turned out to be the whole product, and adding a model call would have cost the two properties that make this worth running: zero usage cost and a test suite that gives the same answer every time.
-2. **Detection-rate tracking against NodeGoat and Juice Shop.** Planned as a reported metric rather than a merge gate, and simply absent. The false-positive corpus is the gate that actually shapes the rules, and a false-negative benchmark is still worth adding.
-3. **`SUPPLY-LOCK`, `SUPPLY-SCRIPTS`, `SUPPLY-DENY`, and `SUPPLY-PROV` as rules.** All four behaviours ship, but as checks in the SessionStart baseline pass and the `npm install` gate rather than as AST rules with ids. Lockfile presence, install-script policy, and known-bad versions are properties of a project and a command line, not of a syntax tree.
-4. **`PP-VUE`.** Dropped. `PP-02` and `PP-03` already cover merging request data into long lived objects, and framing it as a Vue rule added a name without adding detection. `VUE-URL` was built instead, covering bound `:href` and `:src` with no protocol check, which was the real gap.
+Two things were missing when the plan was first checked against the code, and both are now in.
+
+**The four supply chain rules.** `SUPPLY-LOCK`, `SUPPLY-SCRIPTS`, `SUPPLY-DENY`, and `SUPPLY-PROV` exist as rules with ids, severities, and OWASP mappings, in `src/rules/supply/manifest.js`. They needed a third rule shape: `target: 'manifest'` with a `matchManifest(ctx)` that takes a project rather than a syntax tree, because whether a lockfile exists, whether install scripts can run, and whether anybody ever verifies a signature are properties of a project and not of any line of code. `src/engine/manifest.js` builds that context from `package.json`, the lockfile, `.npmrc`, and the CI directory, and returns findings in the same shape as everything else, so the report file, the severity split, the loop guard, and the audit command all handle them without knowing they are different. They run on a write to `package.json`, `.npmrc`, or a lockfile, once at session start, and in the audit.
+
+This replaced the ad hoc lockfile and denylist notes that the SessionStart hook used to build by hand. One implementation instead of two that could drift apart.
+
+**Model escalation.** `hooks/escalation.json` is a `prompt` hook that asks a fast model to judge the four classes a parser cannot settle: IDOR-01, AUTHZ-01, CSRF-01, and MASS-01. It reads the written code out of `$ARGUMENTS`, is told to refute by default and stay silent unless it can name a line and describe what an attacker sends and what they get back, and can only add context. It cannot block a write or stop a turn, because a model should not get to halt someone's work on its own judgement.
+
+It is deliberately not loaded by the plugin. Claude Code auto discovers `hooks/hooks.json` and `hooks.json` only, so the filename keeps it off, and the manifest does not reference it. Installing it into your own settings is the switch. There is no config flag on purpose: a flag would be a second source of truth that could disagree with whether the hook is actually registered, and the plugin advertises zero model calls, which has to stay true unless you say otherwise.
+
+### What the plan asked for and still is not built
+
+1. **Detection-rate tracking against NodeGoat and Juice Shop.** Planned as a reported metric rather than a merge gate, and still absent. The false-positive corpus is the gate that actually shapes the rules. Nothing yet measures what the ruleset misses.
+2. **`PP-VUE`.** Dropped. `PP-02` and `PP-03` already cover merging request data into long lived objects, and framing it as a Vue rule added a name without adding detection. `VUE-URL` was built instead, covering bound `:href` and `:src` with no protocol check, which was the real gap.
 
 `PERF-N05` in the pack list below is the same detector as `REDOS-01` and was counted twice in the plan. `RATE-01`, covering login endpoints with no rate limit, was added during v0.2 and never appeared in the plan inventory.
 
@@ -35,10 +45,12 @@ The plan targeted about 60 enforced rules. What shipped:
 
 | | Count |
 |---|---|
-| Rules in `RULES` | 74 |
+| Rules in `RULES` | 78 |
 | Dependency advisory ids (`NEXT-VER`, `RSC-VER`, `NUXT-VER`, `VITE-VER`) | 4 |
-| Distinct finding ids in total | 78 |
-| Packs | 7 |
+| Distinct finding ids in total | 82 |
+| Packs | 8 |
+
+Rules come in three shapes. Most take an AST node. Vue template rules take a scanned element. Supply chain rules take a project.
 
 Measured on the development machine: 37 ms for a clean file, 49 ms when a rule fires, against budgets of 60 ms and 140 ms. The tool reports nothing against its own source, with two documented suppressions where the hook reads back the file it was told about.
 

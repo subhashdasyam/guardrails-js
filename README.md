@@ -2,7 +2,7 @@
 
 A Claude Code plugin that tells Claude when the JavaScript it just wrote is unsafe or slow, so Claude fixes it in the same turn.
 
-**v1.0**: 74 rules covering security and performance across Node, Express, Fastify, NestJS, React, Next.js, Vue, and Nuxt, plus dependency version checks, the npm install gate, session priming, a repo audit command, and a CLI for CI. See the [changelog](CHANGELOG.md) and the [design notes](docs/PLAN.md).
+**v1.0**: 78 rules covering security and performance across Node, Express, Fastify, NestJS, React, Next.js, Vue, and Nuxt, plus dependency version checks, the npm install gate, session priming, a repo audit command, and a CLI for CI. See the [changelog](CHANGELOG.md) and the [design notes](docs/PLAN.md).
 
 ## The problem
 
@@ -28,7 +28,7 @@ The `npm install` prompt is the only place it interrupts you, because advice aft
 
 There is no Python in it. Not in the analyzer, not in the hooks, not in the build.
 
-It makes no model calls, so it costs nothing to run.
+It makes no model calls by default, so it costs nothing to run. There is an opt-in second opinion, described below, that you have to install yourself.
 
 ## Install
 
@@ -66,14 +66,14 @@ Anthropic ships [`security-guidance`](https://code.claude.com/docs/en/security-g
 | npm supply chain | nothing | install gate, known-bad list, typosquat check |
 | Performance checks | nothing | event loop, concurrency, memory, React and Vue render |
 | Dependency CVEs | nothing | Next.js, React Server Components, Nuxt, Vite version checks |
-| Model cost | a model call per turn and per commit | none |
-| Deep model review | yes | none |
+| Model cost | a model call per turn and per commit | none unless you opt in |
+| Deep model review | yes, always on | opt-in, four rules only |
 
 They use different hooks and do not fight each other. Run both.
 
 ## What it checks today
 
-74 rules plus 4 dependency advisories, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
+78 rules plus 4 dependency advisories, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
 
 Injection and interpreters, A05:
 
@@ -144,6 +144,17 @@ Vue and Nuxt:
 | VITE-HOST | A dev server bound to every interface |
 | NUXT-ROUTE-RULES | Route rules covering a sensitive path, which is rendering config and not authorization |
 
+Supply chain, A03. These take a project rather than a syntax tree, so they read `package.json`, the lockfile, `.npmrc`, and your CI:
+
+| Rule | What it catches |
+|---|---|
+| SUPPLY-LOCK | No lockfile, `package-lock=false` in `.npmrc`, or a script passing `--no-package-lock` |
+| SUPPLY-SCRIPTS | Nothing disables install scripts, so every package in the tree runs code on install |
+| SUPPLY-DENY | A known compromised release present in the lockfile or pinned in the manifest |
+| SUPPLY-PROV | Nothing in the project or its CI ever runs `npm audit signatures` |
+
+They re-run whenever `package.json`, `.npmrc`, or a lockfile is written, and once at session start.
+
 Dependency versions, A03. Some problems are not in your code at all, so these read the lockfile:
 
 | Rule | What it catches |
@@ -207,6 +218,18 @@ The reason after `--` is required. An ignore without one gets reported itself, s
 
 If a finding comes back twice and you fix it twice, the third time it drops to a quiet note instead of looping.
 
+## Model escalation, off by default
+
+Four rules cannot be settled by a parser alone, because answering them means following code across functions: IDOR-01, AUTHZ-01, CSRF-01, and MASS-01. They ship at medium and stay on the quiet channel for exactly that reason.
+
+If you want a second opinion on those four, `hooks/escalation.json` is a prompt hook that asks a model to judge them. It is not loaded by the plugin, because the plugin advertises zero model calls and that has to stay true unless you say otherwise. Installing it is the switch, and there is no config flag, so there is only one thing to check when you wonder whether it is on.
+
+To turn it on, copy the `PostToolUse` entry from `hooks/escalation.json` into your `.claude/settings.json` under `hooks`. It runs on the fast model, is capped at 30 seconds, and can only add context. It cannot block a write or stop a turn, which is deliberate: a model should not get to halt your work on its own judgement.
+
+The prompt tells it to refute by default and say nothing unless it can point at a line and describe what an attacker sends and what they get back. A wrong second opinion is worse than none, because it teaches you to ignore the tool.
+
+Cost: one fast-model call per file write, so leave it off unless you are working on something where authorization mistakes are expensive.
+
 ## Privacy
 
 By default the npm check asks osv.dev and registry.npmjs.org about packages you are about to install. That means package names leave your machine. Set `"network": false` to turn it off. The offline checks still work: the bundled known-bad list, the typosquat distance check, and the lockfile comparison all run locally in about five milliseconds.
@@ -217,7 +240,7 @@ Nothing else ever leaves your machine. File contents are never sent anywhere.
 
 ```bash
 npm ci --ignore-scripts
-npm test              # 282 rule, engine, and dependency tests
+npm test              # 309 rule, engine, supply chain, and dependency tests
 npm run build         # rebuild dist/, which is committed
 npm run check:dist    # fail if the committed bundle is stale
 npm run bench         # latency budget

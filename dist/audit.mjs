@@ -14615,8 +14615,8 @@ var require_lib = __commonJS({
 });
 
 // src/hooks/audit.js
-import fs4 from "node:fs";
-import path5 from "node:path";
+import fs5 from "node:fs";
+import path6 from "node:path";
 
 // src/engine/config.js
 import fs from "node:fs";
@@ -15516,7 +15516,9 @@ function analyze(options) {
     rules,
     wholeFile = false
   } = options;
-  const enabled = rules.filter((rule) => !config.isRuleDisabled(rule.id));
+  const enabled = rules.filter(
+    (rule) => rule.target !== "manifest" && !config.isRuleDisabled(rule.id)
+  );
   if (enabled.length === 0) return { findings: [] };
   const candidates = prefilter(source, enabled);
   if (candidates.length === 0) return { findings: [] };
@@ -15534,7 +15536,7 @@ function analyze(options) {
   const language = parsed.language ?? "js";
   const templateRules = isVue ? candidates.filter((rule) => rule.target === "template") : [];
   const active = candidates.filter(
-    (rule) => rule.target !== "template" && languageMatches(rule, language)
+    (rule) => rule.target !== "template" && rule.target !== "manifest" && languageMatches(rule, language)
   );
   if (active.length === 0 && templateRules.length === 0) return { findings: [] };
   const byNodeType = /* @__PURE__ */ new Map();
@@ -18120,6 +18122,214 @@ var VUE_07 = {
 };
 var perf_default2 = [REACT_04, REACT_05, REACT_07, VUE_04, VUE_07];
 
+// src/supply-chain/data/denylist.json
+var denylist_default = {
+  note: "Known compromised npm releases. This list is a starting point, not full coverage. The scheduled CI job in .github/workflows/threat-data.yml refreshes it from OSV and GHSA, and live OSV lookups fill the gap between releases. Never treat an absence from this list as a clean bill of health.",
+  updated: "2026-08-23",
+  incidents: {
+    "chalk-debug-2025-09": {
+      description: "Maintainer account takeover on 8 September 2025. Popular colour and logging packages published with a browser wallet stealer.",
+      reference: "https://socket.dev/blog/npm-author-qix-compromised-in-major-supply-chain-attack"
+    },
+    "shai-hulud-2025-09": {
+      description: "Self replicating worm that stole npm and cloud credentials and republished itself into other packages.",
+      reference: "https://www.cisa.gov/news-events/alerts/2025/09/23/widespread-supply-chain-compromise-impacting-npm-ecosystem"
+    },
+    "shai-hulud-2025-11": {
+      description: "Second wave, added persistence through CI runners and public repositories.",
+      reference: "https://www.cisa.gov/news-events/alerts/2025/09/23/widespread-supply-chain-compromise-impacting-npm-ecosystem"
+    },
+    historical: {
+      description: "Earlier incidents kept because these exact versions still appear in old lockfiles.",
+      reference: "https://github.com/advisories"
+    }
+  },
+  packages: {
+    chalk: { versions: ["5.6.1"], incident: "chalk-debug-2025-09" },
+    debug: { versions: ["4.4.2"], incident: "chalk-debug-2025-09" },
+    "ansi-styles": { versions: ["6.2.2"], incident: "chalk-debug-2025-09" },
+    "strip-ansi": { versions: ["7.1.1"], incident: "chalk-debug-2025-09" },
+    "ansi-regex": { versions: ["6.2.1"], incident: "chalk-debug-2025-09" },
+    "wrap-ansi": { versions: ["9.0.1"], incident: "chalk-debug-2025-09" },
+    "slice-ansi": { versions: ["7.1.1"], incident: "chalk-debug-2025-09" },
+    "color-convert": { versions: ["3.1.1"], incident: "chalk-debug-2025-09" },
+    "color-name": { versions: ["2.0.1"], incident: "chalk-debug-2025-09" },
+    "color-string": { versions: ["2.1.1"], incident: "chalk-debug-2025-09" },
+    color: { versions: ["5.0.1"], incident: "chalk-debug-2025-09" },
+    "is-arrayish": { versions: ["0.3.3"], incident: "chalk-debug-2025-09" },
+    "error-ex": { versions: ["1.3.3"], incident: "chalk-debug-2025-09" },
+    "simple-swizzle": { versions: ["0.2.3"], incident: "chalk-debug-2025-09" },
+    "supports-color": { versions: ["10.2.1"], incident: "chalk-debug-2025-09" },
+    "supports-hyperlinks": { versions: ["4.1.1"], incident: "chalk-debug-2025-09" },
+    "has-ansi": { versions: ["6.0.1"], incident: "chalk-debug-2025-09" },
+    "chalk-template": { versions: ["1.1.1"], incident: "chalk-debug-2025-09" },
+    backslash: { versions: ["0.2.1"], incident: "chalk-debug-2025-09" },
+    "proto-tinker-wc": { versions: ["0.1.87"], incident: "chalk-debug-2025-09" },
+    "event-stream": { versions: ["3.3.6"], incident: "historical" },
+    "flatmap-stream": { versions: ["0.1.1", "0.1.2"], incident: "historical" },
+    "ua-parser-js": { versions: ["0.7.29", "0.8.0", "1.0.0"], incident: "historical" },
+    "node-ipc": { versions: ["10.1.1", "10.1.2", "10.1.3", "9.2.2"], incident: "historical" },
+    coa: { versions: ["2.0.3", "2.0.4", "2.1.1", "2.1.3", "3.0.1"], incident: "historical" },
+    rc: { versions: ["1.2.9", "1.3.9", "2.3.9"], incident: "historical" },
+    "eslint-scope": { versions: ["3.7.2"], incident: "historical" },
+    "eslint-config-eslint": { versions: ["5.0.2"], incident: "historical" },
+    "bootstrap-sass": { versions: ["3.2.0.3"], incident: "historical" },
+    "electron-native-notify": { versions: ["1.1.6"], incident: "historical" }
+  },
+  suspiciousNames: [
+    "crossenv",
+    "cross-env.js",
+    "d3.js",
+    "fabric-js",
+    "ffmepg",
+    "gruntcli",
+    "http-proxy.js",
+    "jquery.js",
+    "mariadb",
+    "mongose",
+    "mssql.js",
+    "mssql-node",
+    "mysqljs",
+    "node-fabric",
+    "node-opencv",
+    "node-opensl",
+    "node-openssl",
+    "node-sqlite",
+    "node-tkinter",
+    "nodecaffe",
+    "nodefabric",
+    "nodeffmpeg",
+    "nodemailer-js",
+    "nodemailer.js",
+    "nodemssql",
+    "noderequest",
+    "nodesass",
+    "nodesqlite",
+    "opencv.js",
+    "openssl.js",
+    "proxy.js",
+    "shadowsock",
+    "smb",
+    "sqlite.js",
+    "sqliter",
+    "sqlserver",
+    "tkinter"
+  ]
+};
+
+// src/rules/supply/manifest.js
+var CI_INSTALL = /\bnpm\s+install\b|\bnpm\s+i\b(?!\w)/;
+var SUPPLY_LOCK = {
+  id: "SUPPLY-LOCK",
+  title: "Dependency versions are not pinned by a lockfile",
+  severity: "medium",
+  owasp2025: "A03",
+  cwe: ["CWE-1357", "CWE-829"],
+  target: "manifest",
+  matchManifest(ctx) {
+    const problems = [];
+    if (!ctx.hasLockfile) {
+      problems.push("there is no lockfile, so nothing records the exact versions that were installed");
+    }
+    if (/^\s*package-lock\s*=\s*false/im.test(ctx.npmrc)) {
+      problems.push(".npmrc sets package-lock=false, which turns lockfile writing off");
+    }
+    for (const [name, body] of Object.entries(ctx.pkg?.scripts ?? {})) {
+      if (typeof body !== "string") continue;
+      if (!CI_INSTALL.test(body)) continue;
+      if (/--no-package-lock/.test(body)) {
+        problems.push(`the "${name}" script passes --no-package-lock`);
+      }
+    }
+    if (problems.length === 0) return null;
+    return { problems };
+  },
+  message: (f) => {
+    const joined = f.problems.join(", and ");
+    return `${joined.charAt(0).toUpperCase()}${joined.slice(1)}. Without a lockfile every install can resolve to a different tree, so a compromised release reaches you silently and nobody can tell what you shipped.`;
+  },
+  fix: "npm install once, commit package-lock.json, then use npm ci everywhere else."
+};
+var SUPPLY_SCRIPTS = {
+  id: "SUPPLY-SCRIPTS",
+  title: "Install scripts are allowed to run",
+  severity: "medium",
+  owasp2025: "A03",
+  cwe: ["CWE-829", "CWE-94"],
+  target: "manifest",
+  matchManifest(ctx) {
+    const dependencyCount = Object.keys(ctx.pkg?.dependencies ?? {}).length + Object.keys(ctx.pkg?.devDependencies ?? {}).length;
+    if (dependencyCount === 0) return null;
+    if (/^\s*ignore-scripts\s*=\s*true/im.test(ctx.npmrc)) return null;
+    const scripts = Object.entries(ctx.pkg?.scripts ?? {});
+    const guarded = scripts.some(
+      ([, body]) => typeof body === "string" && /--ignore-scripts/.test(body)
+    );
+    if (guarded) return null;
+    const ownHooks = scripts.filter(([name]) => /^(pre|post)?install$/.test(name) || name === "prepare").map(([name]) => name);
+    return { dependencyCount, ownHooks };
+  },
+  message: (f) => `Nothing in this project disables install scripts, and there are ${f.dependencyCount} dependencies.${f.ownHooks.length > 0 ? ` This package also defines ${f.ownHooks.join(" and ")}.` : ""} Installing runs code from every package in the tree with your permissions, before you have read any of it.`,
+  fix: "npm config set ignore-scripts true --location=project\n# then run the few packages that genuinely need a build step on purpose"
+};
+var SUPPLY_DENY = {
+  id: "SUPPLY-DENY",
+  title: "A known compromised release is installed",
+  severity: "critical",
+  owasp2025: "A03",
+  cwe: ["CWE-506", "CWE-829"],
+  target: "manifest",
+  matchManifest(ctx) {
+    const hits = [];
+    for (const [name, version] of ctx.locked) {
+      const entry = denylist_default.packages[name];
+      if (!entry) continue;
+      if (!entry.versions.includes(version)) continue;
+      hits.push({ name, version, incident: denylist_default.incidents[entry.incident] });
+    }
+    for (const [name, range] of Object.entries({
+      ...ctx.pkg?.dependencies ?? {},
+      ...ctx.pkg?.devDependencies ?? {}
+    })) {
+      if (ctx.locked.has(name)) continue;
+      const entry = denylist_default.packages[name];
+      if (!entry) continue;
+      const exact = /^\d+\.\d+\.\d+$/.test(String(range).trim()) ? String(range).trim() : null;
+      if (!exact || !entry.versions.includes(exact)) continue;
+      hits.push({ name, version: exact, incident: denylist_default.incidents[entry.incident] });
+    }
+    if (hits.length === 0) return null;
+    return { hits };
+  },
+  message: (f) => {
+    const listed = f.hits.map((hit) => `${hit.name}@${hit.version}`).join(", ");
+    const why = f.hits[0].incident?.description ?? "Published with malicious code.";
+    return `${listed} is a release known to have shipped malicious code. ${why} Assume anything this machine could read has been taken.`;
+  },
+  fix: "Upgrade past the affected version, delete node_modules, reinstall from a clean checkout, and rotate every npm, cloud, and git credential this machine has touched."
+};
+var VERIFIES_PROVENANCE = /npm\s+audit\s+signatures|--provenance|cosign\s+verify|slsa-verifier|sigstore/;
+var SUPPLY_PROV = {
+  id: "SUPPLY-PROV",
+  title: "Package signatures are never verified",
+  severity: "low",
+  owasp2025: "A03",
+  cwe: ["CWE-345", "CWE-494"],
+  target: "manifest",
+  matchManifest(ctx) {
+    const dependencyCount = Object.keys(ctx.pkg?.dependencies ?? {}).length;
+    if (dependencyCount === 0) return null;
+    const scripts = Object.values(ctx.pkg?.scripts ?? {}).join("\n");
+    if (VERIFIES_PROVENANCE.test(scripts)) return null;
+    const workflows = ctx.read(".github/workflows");
+    if (workflows && VERIFIES_PROVENANCE.test(workflows)) return null;
+    return { dependencyCount };
+  },
+  message: (f) => `Nothing in this project ever checks that its ${f.dependencyCount} dependencies came from where they claim. Registry signatures and provenance attestations exist and go unread unless something asks for them.`,
+  fix: "npm audit signatures\n# add it to CI, so a tampered tarball fails the build rather than shipping"
+};
+var manifest_default = [SUPPLY_LOCK, SUPPLY_SCRIPTS, SUPPLY_DENY, SUPPLY_PROV];
+
 // src/rules/index.js
 var PACKS = {
   "node-core": [...injection_default, ...ssrf_default, ...deserialization_default, ...secrets_config_default, ...prototype_pollution_default],
@@ -18128,7 +18338,8 @@ var PACKS = {
   react: [...xss_default, ...next_default],
   vue: [...vue_default],
   "perf-node": [...perf_default],
-  "perf-frontend": [...perf_default2]
+  "perf-frontend": [...perf_default2],
+  supply: [...manifest_default]
 };
 var RULES = Object.values(PACKS).flat();
 var RULES_BY_ID = new Map(RULES.map((rule) => [rule.id, rule]));
@@ -18378,15 +18589,100 @@ function describeDependencyFinding(finding) {
   return `${finding.ruleId} ${version}: ${finding.title} (${finding.advisory}). ${finding.summary} ${fix} ${finding.action}`;
 }
 
-// src/hooks/util.js
+// src/engine/manifest.js
 import fs3 from "node:fs";
 import path4 from "node:path";
+var LOCKFILES = ["package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"];
+function readText(file) {
+  try {
+    return fs3.readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
+function makeReader(projectRoot) {
+  return (relative) => {
+    const target = path4.join(projectRoot, relative);
+    let stats;
+    try {
+      stats = fs3.statSync(target);
+    } catch {
+      return "";
+    }
+    if (stats.isFile()) return readText(target);
+    if (!stats.isDirectory()) return "";
+    try {
+      return fs3.readdirSync(target).filter((name) => /\.(ya?ml|json|sh|toml)$/i.test(name)).map((name) => readText(path4.join(target, name))).join("\n");
+    } catch {
+      return "";
+    }
+  };
+}
+function manifestContext(projectRoot, pkg = null) {
+  const read = makeReader(projectRoot);
+  let manifest = pkg;
+  if (!manifest) {
+    try {
+      manifest = JSON.parse(readText(path4.join(projectRoot, "package.json")));
+    } catch {
+      manifest = null;
+    }
+  }
+  const lockfileName = LOCKFILES.find((name) => fs3.existsSync(path4.join(projectRoot, name))) ?? null;
+  return {
+    projectRoot,
+    pkg: manifest,
+    locked: readLockedVersions(projectRoot),
+    npmrc: read(".npmrc"),
+    hasLockfile: Boolean(lockfileName),
+    lockfileName,
+    read
+  };
+}
+function runManifestRules(projectRoot, config, pkg = null, rules = manifest_default) {
+  const ctx = manifestContext(projectRoot, pkg);
+  if (!ctx.pkg) return [];
+  const findings = [];
+  for (const rule of rules) {
+    if (config.isRuleDisabled(rule.id)) continue;
+    let hit;
+    try {
+      hit = rule.matchManifest(ctx);
+    } catch {
+      continue;
+    }
+    if (!hit) continue;
+    const severity = config.severityFor({ ...rule, severity: hit.severityHint ?? rule.severity });
+    if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+    findings.push({
+      ruleId: rule.id,
+      title: rule.title,
+      severity,
+      owasp2025: rule.owasp2025,
+      cwe: rule.cwe ?? [],
+      api: rule.api ?? null,
+      line: 1,
+      column: 1,
+      evidence: ctx.lockfileName ? `package.json, ${ctx.lockfileName}` : "package.json",
+      message: typeof rule.message === "function" ? rule.message(hit) : rule.message,
+      fix: rule.fix,
+      filePath: "package.json"
+    });
+  }
+  const order = { critical: 0, high: 1, medium: 2, low: 3, perf: 4 };
+  findings.sort((a, b) => (order[a.severity] ?? 9) - (order[b.severity] ?? 9));
+  return findings;
+}
+
+// src/hooks/util.js
+import fs4 from "node:fs";
+import path5 from "node:path";
 function findUp(startDir, filename, limit = 30) {
-  let dir = path4.resolve(startDir);
+  let dir = path5.resolve(startDir);
   for (let depth = 0; depth < limit; depth += 1) {
-    const candidate = path4.join(dir, filename);
-    if (fs3.existsSync(candidate)) return candidate;
-    const parent = path4.dirname(dir);
+    const candidate = path5.join(dir, filename);
+    if (fs4.existsSync(candidate)) return candidate;
+    const parent = path5.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -18396,14 +18692,14 @@ function readPackageJson(startDir) {
   const file = findUp(startDir, "package.json");
   if (!file) return { pkg: null, root: startDir, file: null };
   try {
-    return { pkg: JSON.parse(fs3.readFileSync(file, "utf8")), root: path4.dirname(file), file };
+    return { pkg: JSON.parse(fs4.readFileSync(file, "utf8")), root: path5.dirname(file), file };
   } catch {
-    return { pkg: null, root: path4.dirname(file), file };
+    return { pkg: null, root: path5.dirname(file), file };
   }
 }
 function relativeTo(root, filePath) {
   try {
-    const rel = path4.relative(root, filePath);
+    const rel = path5.relative(root, filePath);
     return rel.startsWith("..") ? filePath : rel;
   } catch {
     return filePath;
@@ -18452,20 +18748,20 @@ function parseArgs(argv) {
 function* walkFiles(dir, limit, seen = { count: 0 }) {
   let entries;
   try {
-    entries = fs4.readdirSync(dir, { withFileTypes: true });
+    entries = fs5.readdirSync(dir, { withFileTypes: true });
   } catch {
     return;
   }
   for (const entry of entries) {
     if (seen.count >= limit) return;
-    const full = path5.join(dir, entry.name);
+    const full = path6.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name) || entry.name.startsWith(".")) continue;
       yield* walkFiles(full, limit, seen);
       continue;
     }
     if (!entry.isFile()) continue;
-    if (!SUPPORTED_EXTENSIONS.has(path5.extname(entry.name).toLowerCase())) continue;
+    if (!SUPPORTED_EXTENSIONS.has(path6.extname(entry.name).toLowerCase())) continue;
     seen.count += 1;
     yield full;
   }
@@ -18476,11 +18772,11 @@ function main(argv = process.argv.slice(2)) {
     process.stdout.write(USAGE);
     return [];
   }
-  const target = path5.resolve(args.target);
+  const target = path6.resolve(args.target);
   const config = loadConfig(target);
   const { pkg, root } = readPackageJson(target);
-  const projectRoot = config.projectRoot || root || target;
-  const stats = fs4.existsSync(target) ? fs4.statSync(target) : null;
+  const projectRoot = config.configFile ? config.projectRoot : root || target;
+  const stats = fs5.existsSync(target) ? fs5.statSync(target) : null;
   if (!stats) {
     process.stderr.write(`guardrails-js: ${target} does not exist
 `);
@@ -18494,7 +18790,7 @@ function main(argv = process.argv.slice(2)) {
     if (isExcluded(relative, config)) continue;
     let source;
     try {
-      source = fs4.readFileSync(file, "utf8");
+      source = fs5.readFileSync(file, "utf8");
     } catch {
       continue;
     }
@@ -18511,6 +18807,7 @@ function main(argv = process.argv.slice(2)) {
     all.push(...findings);
   }
   if (pkg) {
+    all.push(...runManifestRules(projectRoot, config, pkg));
     const locked = readLockedVersions(projectRoot);
     for (const match of checkDependencies(pkg, locked)) {
       all.push({

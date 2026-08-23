@@ -14,6 +14,7 @@ import {
   checkDependencies,
   describeDependencyFinding,
 } from '../supply-chain/dependencies.js';
+import { runManifestRules } from '../engine/manifest.js';
 import { readPackageJson, relativeTo } from './util.js';
 
 const SKIP_DIRS = new Set([
@@ -97,7 +98,9 @@ export function main(argv = process.argv.slice(2)) {
 
   const config = loadConfig(target);
   const { pkg, root } = readPackageJson(target);
-  const projectRoot = config.projectRoot || root || target;
+  // A config file pins the project root. Without one, the directory holding
+  // package.json is the answer, not whatever directory we were pointed at.
+  const projectRoot = config.configFile ? config.projectRoot : root || target;
 
   const stats = fs.existsSync(target) ? fs.statSync(target) : null;
   if (!stats) {
@@ -133,8 +136,11 @@ export function main(argv = process.argv.slice(2)) {
     all.push(...findings);
   }
 
-  // Dependency ranges are not visible in source, so check them separately.
+  // Neither the project level supply chain rules nor dependency ranges are
+  // visible in source, so both get their own pass.
   if (pkg) {
+    all.push(...runManifestRules(projectRoot, config, pkg));
+
     const locked = readLockedVersions(projectRoot);
     for (const match of checkDependencies(pkg, locked)) {
       all.push({

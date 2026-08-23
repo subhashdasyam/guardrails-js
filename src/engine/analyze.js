@@ -44,7 +44,12 @@ export function analyze(options) {
     wholeFile = false,
   } = options;
 
-  const enabled = rules.filter((rule) => !config.isRuleDisabled(rule.id));
+  // Manifest rules have no prefilter, because there is no source text to
+  // triage. Leaving them in would mean every candidate list is non empty, which
+  // would parse every clean file and throw away the cheap path entirely.
+  const enabled = rules.filter(
+    (rule) => rule.target !== 'manifest' && !config.isRuleDisabled(rule.id),
+  );
   if (enabled.length === 0) return { findings: [] };
 
   const candidates = prefilter(source, enabled);
@@ -72,8 +77,13 @@ export function analyze(options) {
   // Template rules declare `vue` as their language, but the parsed language of
   // a single file component is the language of its script block, so they are
   // selected by file extension instead.
+  // Manifest rules look at a project rather than a syntax tree and run in their
+  // own pass, so they are not dispatched here at all.
   const active = candidates.filter(
-    (rule) => rule.target !== 'template' && languageMatches(rule, language),
+    (rule) =>
+      rule.target !== 'template' &&
+      rule.target !== 'manifest' &&
+      languageMatches(rule, language),
   );
 
   if (active.length === 0 && templateRules.length === 0) return { findings: [] };
