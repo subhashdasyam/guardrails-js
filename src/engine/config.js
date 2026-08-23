@@ -67,12 +67,6 @@ function findConfigFile(startDir) {
   return null;
 }
 
-function envBool(name, fallback) {
-  const raw = process.env[name];
-  if (raw === undefined) return fallback;
-  return !['0', 'false', 'no', 'off', ''].includes(String(raw).toLowerCase());
-}
-
 export function loadConfig(cwd = process.cwd()) {
   const file = findConfigFile(cwd);
   const fromFile = file ? readJson(file) ?? {} : {};
@@ -87,25 +81,11 @@ export function loadConfig(cwd = process.cwd()) {
     projectRoot: file ? path.dirname(file) : cwd,
   };
 
-  // Plugin level options come through as environment variables and act as the
-  // default when the project has not said otherwise.
-  if (fromFile.network === undefined) {
-    config.network = envBool('CLAUDE_PLUGIN_OPTION_NETWORK', DEFAULTS.network);
-  }
-  if (fromFile.priming === undefined) {
-    config.priming = envBool('CLAUDE_PLUGIN_OPTION_PRIMING', DEFAULTS.priming);
-  }
-  // The settings panel can only offer yes or no, so yes means the high impact
-  // set. Anyone wanting all of them says so in .guardrails-js.json.
-  if (fromFile.performance === undefined) {
-    config.performance = envBool('CLAUDE_PLUGIN_OPTION_PERFORMANCE', true) ? 'high' : 'off';
-  }
-  if (fromFile.report === undefined) {
-    config.report = envBool('CLAUDE_PLUGIN_OPTION_REPORT', DEFAULTS.report);
-  }
-
-  // Nothing validates a value coming from settings or the environment, so a
-  // typo would otherwise silently drop every finding.
+  // Installing asks nothing. The manifest declares no userConfig, so there is
+  // one way to change any of this and it is the file above.
+  //
+  // Nothing validates what goes in that file, so a typo would otherwise
+  // silently drop every finding.
   if (!SECURITY_SEVERITIES.includes(config.minSeverity)) {
     config.minSeverity = DEFAULTS.minSeverity;
   }

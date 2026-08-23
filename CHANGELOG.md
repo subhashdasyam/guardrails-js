@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.4.0
+
+Installing no longer asks anything.
+
+There were four questions at install, all defaulting to yes. Every one of them
+could only make things worse if answered without reading, which is what usually
+happens to a setup panel. They are gone. The manifest declares no userConfig, so
+the harness has nothing to prompt for and installing is one step.
+
+The defaults are unchanged: security floor medium, performance on at high
+impact, online checks on, report file on, priming on.
+
+Everything is configured in .guardrails-js.json instead, which is now the only
+way, so there is one place to look when you wonder why something is behaving as
+it is. The readme documents every option with its default, plus four ready made
+configurations for the cases people actually want: quieter, louder, fully
+offline, and switching off one rule that is wrong for a codebase.
+
+The code that read CLAUDE_PLUGIN_OPTION_ variables is gone too. With nothing
+declared in the manifest, the harness never sets them, so reading them would be
+dead code pretending to be a second way to configure this. A test asserts it
+stays gone.
+
+If you set anything in the panel on an earlier version, set it in
+.guardrails-js.json instead.
+
 ## 1.3.0
 
 Performance findings are now graded, and there is a switch for the report file.

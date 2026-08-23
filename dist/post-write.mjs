@@ -14822,11 +14822,6 @@ function findConfigFile(startDir) {
   }
   return null;
 }
-function envBool(name, fallback) {
-  const raw = process.env[name];
-  if (raw === void 0) return fallback;
-  return !["0", "false", "no", "off", ""].includes(String(raw).toLowerCase());
-}
 function loadConfig(cwd = process.cwd()) {
   const file = findConfigFile(cwd);
   const fromFile = file ? readJson(file) ?? {} : {};
@@ -14839,18 +14834,6 @@ function loadConfig(cwd = process.cwd()) {
     configFile: file,
     projectRoot: file ? path2.dirname(file) : cwd
   };
-  if (fromFile.network === void 0) {
-    config.network = envBool("CLAUDE_PLUGIN_OPTION_NETWORK", DEFAULTS.network);
-  }
-  if (fromFile.priming === void 0) {
-    config.priming = envBool("CLAUDE_PLUGIN_OPTION_PRIMING", DEFAULTS.priming);
-  }
-  if (fromFile.performance === void 0) {
-    config.performance = envBool("CLAUDE_PLUGIN_OPTION_PERFORMANCE", true) ? "high" : "off";
-  }
-  if (fromFile.report === void 0) {
-    config.report = envBool("CLAUDE_PLUGIN_OPTION_REPORT", DEFAULTS.report);
-  }
   if (!SECURITY_SEVERITIES.includes(config.minSeverity)) {
     config.minSeverity = DEFAULTS.minSeverity;
   }

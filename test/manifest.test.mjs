@@ -104,71 +104,24 @@ test('the manifest carries what a listing needs', () => {
   assert.match(plugin.name, /^[a-z0-9-]+$/, 'the name is used for command prefixes');
 });
 
-test('the settings panel advertises the same defaults the code uses', async () => {
-  // The panel said min_severity defaulted to "low" while the code defaulted to
-  // "perf". Anyone accepting the panel default got the entire performance pack
-  // switched off without being told, because perf sits below low.
-  const { loadConfig } = await import('../src/engine/config.js');
-
-  // Read the code defaults with no project config and no plugin options set.
-  for (const key of Object.keys(process.env)) {
-    if (key.startsWith('CLAUDE_PLUGIN_OPTION_')) delete process.env[key];
-  }
-  const code = loadConfig('/nonexistent-so-defaults-apply');
-
-  const { performanceMode } = await import('../src/engine/config.js');
-
-  // The panel can only say yes or no, so for performance the question is
-  // whether saying yes leaves it switched on, not whether the values match.
-  const pairs = [
-    ['network', code.network],
-    ['report', code.report],
-    ['priming', code.priming],
-  ];
-
-  for (const [panelKey, codeDefault] of pairs) {
-    const option = plugin.userConfig?.[panelKey];
-    assert.ok(option, `plugin.json has no userConfig entry for ${panelKey}`);
-    assert.equal(
-      option.default,
-      codeDefault,
-      `the settings panel says ${panelKey} defaults to ${JSON.stringify(option.default)} ` +
-        `but the code uses ${JSON.stringify(codeDefault)}. Accepting the panel default would ` +
-        'then change behaviour without anyone asking for it.',
-    );
-  }
-
-  assert.equal(plugin.userConfig?.performance?.default, true, 'the panel offers performance on');
-  assert.notEqual(
-    performanceMode(code),
-    'off',
-    'and the code agrees, so accepting the default keeps performance reporting',
+test('installing asks for no configuration at all', () => {
+  // Every option used to be a question at install time. They all defaulted to
+  // yes, which meant four prompts that could only make things worse if anyone
+  // answered without reading. Configuration lives in .guardrails-js.json now,
+  // and installing is one step.
+  assert.equal(
+    plugin.userConfig,
+    undefined,
+    'declaring userConfig makes the harness interrupt the install with questions',
   );
 });
 
-test('nothing in the settings panel asks people to type a value', () => {
-  // The manifest has no enum, options, or choices field, and a string always
-  // renders as a free text box that nothing validates. So every option people
-  // are prompted for is a boolean, which renders as a real yes or no choice.
-  for (const [key, option] of Object.entries(plugin.userConfig ?? {})) {
-    assert.equal(
-      option.type,
-      'boolean',
-      `${key} is type ${option.type}, which renders as free text. Use a boolean, ` +
-        'or move the setting to .guardrails-js.json where it is not prompted for.',
-    );
-    assert.equal(option.default, true, `${key} should default to yes so nobody has to think`);
-  }
-});
-
-test('user config options are shaped the way the harness expects', () => {
-  for (const [key, option] of Object.entries(plugin.userConfig ?? {})) {
-    assert.match(key, /^[a-z0-9_]+$/, `${key} becomes an env var suffix, so keep it plain`);
-    assert.ok(
-      ['string', 'number', 'boolean', 'directory', 'file'].includes(option.type),
-      `${key} has an unsupported type ${option.type}`,
-    );
-    assert.ok(option.title, `${key} needs a title, it is shown in the settings panel`);
-    assert.ok(option.description, `${key} needs a description`);
-  }
+test('nothing in the code reads a plugin option that can never be set', async () => {
+  // With no userConfig declared, the harness never exports CLAUDE_PLUGIN_OPTION_*.
+  // Reading one would be dead code pretending to be a way to configure this.
+  const source = fs.readFileSync(path.join(root, 'src', 'engine', 'config.js'), 'utf8');
+  assert.ok(
+    !source.includes('CLAUDE_PLUGIN_OPTION_'),
+    'config.js reads a plugin option, but nothing can set one any more',
+  );
 });

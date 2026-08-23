@@ -129,7 +129,7 @@ Fourteen tests cover it, all against a stubbed fetch, so they need no network an
 /plugin install guardrails-js@guardrails-js
 ```
 
-That is the whole setup. **Zero runtime dependencies.** The parser is bundled into `dist/`, which is committed, so a clone is all it takes. No install step, no network, nothing to break behind a corporate proxy.
+That is the whole setup. **It asks you nothing**, and the defaults are the shipped behaviour. **Zero runtime dependencies.** The parser is bundled into `dist/`, which is committed, so a clone is all it takes. No install step, no network, nothing to break behind a corporate proxy.
 
 Needs Node 20.10 or later. Tested on 20, 22, 24, and 26.
 
@@ -348,45 +348,72 @@ Rules that would need to reason across functions to be certain, such as IDOR-01,
 
 ## 🔧 Configuration
 
-Installing asks four questions. All four are yes or no, all four default to yes, and pressing through without reading gets sensible behaviour:
+**Installing asks you nothing.** There is no setup panel and no questions. The defaults are the shipped behaviour, and they are the ones you would pick anyway.
 
-| Question | Default | What no does |
+| | Default | What it does |
 |---|---|---|
-| Check packages online before installing | Yes | Skips osv.dev and the registry. Offline checks keep working |
-| Report performance findings | Yes | Only security findings |
-| Save a report file | Yes | Nothing is written into your project |
-| Send rules at session start | Yes | Saves about a thousand tokens per session |
+| `minSeverity` | `"medium"` | Security findings below this are dropped. One of `low`, `medium`, `high`, `critical` |
+| `performance` | `"high"` | Performance findings. `"high"`, `"all"`, or `false` |
+| `network` | `true` | Ask osv.dev and the npm registry about a package before it installs |
+| `report` | `true` | Append findings to `.claude/guardrails-js-report.md` |
+| `priming` | `true` | Send Claude a rule set for your stack at session start |
+| `disableRules` | `[]` | Rule ids to switch off entirely |
+| `severityOverrides` | `{}` | Move a rule up or down, or `"off"` |
+| `excludePaths` | build output | Globs never scanned |
 
-Everything else lives in an optional `.guardrails-js.json` in your project root, which nobody is prompted for:
+To change any of it, drop a `.guardrails-js.json` in your project root. Every field is optional, so include only what you are changing:
 
 ```json
 {
-  "disableRules": ["PROXY-01"],
-  "severityOverrides": { "HTTP-01": "low" },
-  "excludePaths": ["**/legacy/**"],
-  "network": true,
-  "performance": true,
-  "minSeverity": "medium",
-  "priming": true
+  "minSeverity": "low",
+  "performance": "all",
+  "network": false,
+  "report": false,
+  "priming": true,
+  "disableRules": ["PROXY-01", "RATE-01"],
+  "severityOverrides": { "HTTP-01": "low", "IDOR-01": "off" },
+  "excludePaths": ["**/legacy/**", "**/*.generated.ts"]
 }
 ```
 
-`minSeverity` is one of `low`, `medium`, `high`, `critical` and covers security findings only. It defaults to `medium`, which hides two low severity rules. Performance findings are not on that scale and answer to `performance` instead, so raising the floor cannot switch them off by accident.
+### 🎚️ The four you are most likely to want
 
-`performance` takes `"high"` (the default), `"all"`, or `false`. Saying yes in the install panel means `"high"`, which is the nine findings that reliably bite: sync work in a request handler, N+1 queries, unbounded fan out, lost stream backpressure, async `forEach`, unbounded caches, unstable list keys. `"all"` adds the four whose cost depends on data the analyzer cannot see, such as whether a render is actually slow or whether a sequential loop was deliberate.
+**Quieter.** Only the findings that would fail a security review:
 
-To silence one line, say why:
+```json
+{ "minSeverity": "high", "performance": false }
+```
+
+**Louder.** Everything, including the performance findings whose cost depends on how the code is used:
+
+```json
+{ "minSeverity": "low", "performance": "all" }
+```
+
+**Fully offline.** No package names leave your machine, and nothing is written into the project:
+
+```json
+{ "network": false, "report": false }
+```
+
+**One rule is wrong for your codebase.** Turn it off rather than turning the tool off:
+
+```json
+{ "disableRules": ["CSRF-01"] }
+```
+
+### 🤫 Silencing one line
+
+A whole rule is a big hammer for a single false positive. Say why instead:
 
 ```js
 // guardrails-js-ignore SQL-01 -- id is an integer validated by the route schema
 const rows = await pool.query(`SELECT * FROM t WHERE id = ${id}`);
 ```
 
-The reason after `--` is required. An ignore without one gets reported itself, so suppressions stay reviewable. ✍️
+The reason after `--` is required. An ignore without one gets reported itself, so suppressions stay reviewable.
 
 And if a finding comes back twice and you fix it twice, the third time it drops to a quiet note instead of looping. Claude and a rule can never argue forever.
-
----
 
 ## 🤖 A second opinion, off by default
 
