@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.1.1
+
+Fixes an install failure. The plugin would install and then refuse to load:
+
+    Duplicate hooks file detected: ./hooks/hooks.json resolves to already loaded
+    file ... The standard hooks/hooks.json is loaded automatically, so
+    manifest.hooks should only reference additional hook files.
+
+The manifest declared `hooks: ./hooks/hooks.json`, which is the exact path
+Claude Code discovers on its own. The hooks field is only for extra hook files
+beyond the standard one. Removed it, and auto discovery does the work.
+
+Nothing in the test suite could have caught this, because the manifest is read
+by the harness and never by any code in the project. It now has nine tests of
+its own, covering the duplicate path, that every declared path exists, that
+declared paths stay inside the plugin, that the version matches package.json,
+that the marketplace entry points at the plugin, and that the escalation hook
+stays undeclared so it stays opt in. Verified by reintroducing the bug and
+watching the test fail.
+
 ## 1.1.0
 
 Nine more rules, Svelte support, and a much larger package list.

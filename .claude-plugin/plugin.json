@@ -1,7 +1,7 @@
 {
   "name": "guardrails-js",
   "displayName": "guardrails-js",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Tells Claude when the JavaScript it wrote is unsafe or slow, so it fixes it in the same turn. Node, React, Next, Vue, Nuxt, Angular, Svelte, NestJS, tRPC. No Python, no model calls.",
   "author": {
     "name": "Subhash Dasyam",
@@ -19,7 +19,6 @@
     "npm",
     "performance"
   ],
-  "hooks": "./hooks/hooks.json",
   "commands": [
     "./commands"
   ],
