@@ -143,21 +143,128 @@ export async function queryRegistry(name, timeoutMs = 2000, now = Date.now()) {
   return value;
 }
 
-/** Turn online facts into extra sentences for the prompt. */
+const SEVERITY_RANK = { CRITICAL: 0, HIGH: 1, MODERATE: 2, MEDIUM: 2, LOW: 3 };
+
+function compare(a, b) {
+  const left = String(a).match(/\d+/g)?.map(Number) ?? [];
+  const right = String(b).match(/\d+/g)?.map(Number) ?? [];
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const l = left[i] ?? 0;
+    const r = right[i] ?? 0;
+    if (l !== r) return l < r ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * Full advisories for one exact version, with the versions each was fixed in.
+ * The batch endpoint returns ids only, which is not enough to tell an advisory
+ * you can act on from one you cannot.
+ */
+export async function queryOsvDetailed(name, version, timeoutMs = 2000, now = Date.now()) {
+  const key = `osvfull-${name}@${version}`;
+  const cached = readCache(key, now);
+  if (cached !== null) return cached;
+
+  const json = await fetchJson(
+    'https://api.osv.dev/v1/query',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ package: { name, ecosystem: 'npm' }, version }),
+    },
+    timeoutMs,
+  );
+
+  if (!json) return [];
+
+  const advisories = (json.vulns ?? []).map((vuln) => {
+    const fixed = [];
+    for (const affected of vuln.affected ?? []) {
+      if (affected.package?.name !== name) continue;
+      for (const range of affected.ranges ?? []) {
+        for (const event of range.events ?? []) {
+          if (event.fixed) fixed.push(event.fixed);
+        }
+      }
+    }
+    return {
+      id: vuln.id,
+      severity: String(vuln.database_specific?.severity ?? '').toUpperCase() || 'UNKNOWN',
+      fixed,
+    };
+  });
+
+  writeCache(key, advisories, now);
+  return advisories;
+}
+
+/**
+ * Advisories worth interrupting someone for.
+ *
+ * An advisory whose only fix is a version nobody has published yet is not
+ * actionable: there is nothing to upgrade to, so saying it out loud teaches
+ * people to click through. lodash 4.17.21 is the case that proves it. It is the
+ * current release and it carries three advisories, all fixed in 4.17.23 or
+ * 4.18.0, neither of which exists. Reporting those would fire on the most
+ * installed package in the ecosystem, every time, with no action available.
+ */
+export function actionableAdvisories(advisories, latestPublished) {
+  if (!latestPublished) return [];
+
+  return advisories
+    .filter((advisory) =>
+      advisory.fixed.some((fix) => compare(fix, latestPublished) <= 0),
+    )
+    .sort(
+      (a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9),
+    );
+}
+
+/**
+ * Advisories for what is actually about to be installed. An explicit version is
+ * checked as given, an unpinned install is checked against whatever latest
+ * resolves to right now.
+ */
+export async function advisoryNotes(packages, timeoutMs = 2000, now = Date.now()) {
+  const notes = [];
+
+  for (const pkg of packages.slice(0, 4)) {
+    const info = await queryRegistry(pkg.name, timeoutMs, now);
+    if (!info?.latest) continue;
+
+    const version = pkg.version ?? info.latest;
+    const advisories = await queryOsvDetailed(pkg.name, version, timeoutMs, now);
+    const actionable = actionableAdvisories(advisories, info.latest);
+    if (actionable.length === 0) continue;
+
+    const worst = actionable[0];
+    const upgrade = worst.fixed
+      .filter((fix) => compare(fix, info.latest) <= 0)
+      .sort(compare)
+      .pop();
+
+    notes.push(
+      `${pkg.name}@${version} has ${actionable.length} known ${
+        actionable.length === 1 ? 'advisory' : 'advisories'
+      } with a fix available, worst is ${worst.severity} ${worst.id}. Upgrade to ${upgrade} or later.`,
+    );
+  }
+
+  return notes;
+}
+
+/** Registry facts about how new and how used a package is. */
 export async function enrich(packages, timeoutMs = 2000) {
   const notes = [];
   const now = Date.now();
 
-  const registry = ['npm', 'osv'];
-  void registry;
-
-  const [osvResults, registryResults] = await Promise.all([
-    queryOsv(packages, timeoutMs, now),
-    Promise.all(packages.slice(0, 4).map((pkg) => queryRegistry(pkg.name, timeoutMs, now))),
-  ]);
+  const results = await Promise.all(
+    packages.slice(0, 4).map((pkg) => queryRegistry(pkg.name, timeoutMs, now)),
+  );
 
   packages.slice(0, 4).forEach((pkg, index) => {
-    const info = registryResults[index];
+    const info = results[index];
 
     if (info === null) {
       notes.push(`${pkg.name} was not found on the npm registry, or the lookup timed out`);
@@ -177,12 +284,6 @@ export async function enrich(packages, timeoutMs = 2000) {
       notes.push(`${pkg.name} latest version is marked deprecated`);
     }
   });
-
-  for (const [name, ids] of osvResults) {
-    if (ids && ids.length > 0) {
-      notes.push(`${name} has open advisories: ${ids.join(', ')}`);
-    }
-  }
 
   return notes;
 }

@@ -176,6 +176,8 @@ Supply chain, A03. These take a project rather than a syntax tree, so they read 
 
 They re-run whenever `package.json`, `.npmrc`, or a lockfile is written, and once at session start.
 
+When the network is on, an install pinned to an exact version is also checked against osv.dev. That check can raise a prompt on its own, which matters because a known vulnerable release of a package everyone trusts passes every offline signal. It only speaks up when a fix is actually published: an advisory whose only fix is a version nobody has released yet is not something you can act on, and reporting it would fire on ordinary installs and teach you to click through.
+
 Dependency versions, A03. Some problems are not in your code at all, so these read the lockfile:
 
 | Rule | What it catches |
@@ -255,7 +257,7 @@ Cost: one fast-model call per file write, so leave it off unless you are working
 
 ## Privacy
 
-By default the npm check asks osv.dev and registry.npmjs.org about packages you are about to install. That means package names leave your machine. Set `"network": false` to turn it off. The offline checks still work: the bundled known-bad list, the typosquat distance check, and the lockfile comparison all run locally in about five milliseconds.
+By default the npm check asks osv.dev and registry.npmjs.org about packages you are about to install, so package names leave your machine. Set `"network": false` to turn it off. The offline checks still work: the bundled known-bad list, the typosquat distance check, and the lockfile comparison all run locally in about five milliseconds.
 
 Nothing else ever leaves your machine. File contents are never sent anywhere.
 
@@ -263,7 +265,7 @@ Nothing else ever leaves your machine. File contents are never sent anywhere.
 
 ```bash
 npm ci --ignore-scripts
-npm test              # 360 rule, engine, parity, supply chain, and dependency tests
+npm test              # 374 rule, engine, parity, supply chain, network, and dependency tests
 npm run build         # rebuild dist/, which is committed
 npm run check:dist    # fail if the committed bundle is stale
 npm run bench         # latency budget

@@ -35,6 +35,16 @@ So the real parser is now a dev dependency, never shipped, and `test/vue-parity.
 
 The install gate's known package list went from 336 names to 3292, so it asks far less often about real dependencies. The refresh script was quietly broken: it paged the npm search API one letter at a time, and single letters return nothing, so every run collected zero names and left the file alone. It now walks a list of the subjects packages are actually about.
 
+### osv.dev lookups now find something
+
+The integration worked but almost never did anything useful. Enrichment only ran once the offline signals had already decided to prompt, and those signals fire on unknown and typosquatted names, which are exactly the packages that have no advisories. Installing a known vulnerable release of a package everyone trusts passed every check in silence.
+
+An install pinned to an exact version now gets its own advisory lookup, and that lookup can raise a prompt on its own.
+
+It only speaks up when a fix is published. An advisory whose only fix is a version nobody has released is not something anyone can act on, and reporting it would fire on ordinary installs. The lookup asks the registry what the latest published version is and keeps only advisories fixed at or below it, then leads with the worst severity and names the version to upgrade to.
+
+The lookups also had no test coverage at all. They now have fourteen tests against a stubbed fetch, covering the reachable fix rule, response parsing, caching, the four package cap, and the guarantee that a network failure returns nothing rather than throwing.
+
 ### Fixes
 
 Two false positives the corpus caught, both the same root cause: rules checked the expression at the sink without looking at what it was bound to. Sanitising once into a variable and then using the variable is the normal way to write this, and it was being flagged. `{@html safeBody}` where `safeBody` came from `DOMPurify.sanitize`, and an Angular bypass of a module level URL constant. There is now one shared resolver for both questions, used by the React, Vue, Angular, and Svelte rules.

@@ -13,8 +13,11 @@ var __export = (target, all) => {
 // src/supply-chain/osv.js
 var osv_exports = {};
 __export(osv_exports, {
+  actionableAdvisories: () => actionableAdvisories,
+  advisoryNotes: () => advisoryNotes,
   enrich: () => enrich,
   queryOsv: () => queryOsv,
+  queryOsvDetailed: () => queryOsvDetailed,
   queryRegistry: () => queryRegistry
 });
 import fs4 from "node:fs";
@@ -121,16 +124,82 @@ async function queryRegistry(name, timeoutMs = 2e3, now = Date.now()) {
   writeCache(key, value, now);
   return value;
 }
+function compare(a, b) {
+  const left = String(a).match(/\d+/g)?.map(Number) ?? [];
+  const right = String(b).match(/\d+/g)?.map(Number) ?? [];
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const l = left[i] ?? 0;
+    const r = right[i] ?? 0;
+    if (l !== r) return l < r ? -1 : 1;
+  }
+  return 0;
+}
+async function queryOsvDetailed(name, version, timeoutMs = 2e3, now = Date.now()) {
+  const key = `osvfull-${name}@${version}`;
+  const cached = readCache(key, now);
+  if (cached !== null) return cached;
+  const json = await fetchJson(
+    "https://api.osv.dev/v1/query",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ package: { name, ecosystem: "npm" }, version })
+    },
+    timeoutMs
+  );
+  if (!json) return [];
+  const advisories = (json.vulns ?? []).map((vuln) => {
+    const fixed = [];
+    for (const affected of vuln.affected ?? []) {
+      if (affected.package?.name !== name) continue;
+      for (const range of affected.ranges ?? []) {
+        for (const event of range.events ?? []) {
+          if (event.fixed) fixed.push(event.fixed);
+        }
+      }
+    }
+    return {
+      id: vuln.id,
+      severity: String(vuln.database_specific?.severity ?? "").toUpperCase() || "UNKNOWN",
+      fixed
+    };
+  });
+  writeCache(key, advisories, now);
+  return advisories;
+}
+function actionableAdvisories(advisories, latestPublished) {
+  if (!latestPublished) return [];
+  return advisories.filter(
+    (advisory) => advisory.fixed.some((fix) => compare(fix, latestPublished) <= 0)
+  ).sort(
+    (a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9)
+  );
+}
+async function advisoryNotes(packages, timeoutMs = 2e3, now = Date.now()) {
+  const notes = [];
+  for (const pkg of packages.slice(0, 4)) {
+    const info = await queryRegistry(pkg.name, timeoutMs, now);
+    if (!info?.latest) continue;
+    const version = pkg.version ?? info.latest;
+    const advisories = await queryOsvDetailed(pkg.name, version, timeoutMs, now);
+    const actionable = actionableAdvisories(advisories, info.latest);
+    if (actionable.length === 0) continue;
+    const worst = actionable[0];
+    const upgrade = worst.fixed.filter((fix) => compare(fix, info.latest) <= 0).sort(compare).pop();
+    notes.push(
+      `${pkg.name}@${version} has ${actionable.length} known ${actionable.length === 1 ? "advisory" : "advisories"} with a fix available, worst is ${worst.severity} ${worst.id}. Upgrade to ${upgrade} or later.`
+    );
+  }
+  return notes;
+}
 async function enrich(packages, timeoutMs = 2e3) {
   const notes = [];
   const now = Date.now();
-  const registry = ["npm", "osv"];
-  const [osvResults, registryResults] = await Promise.all([
-    queryOsv(packages, timeoutMs, now),
-    Promise.all(packages.slice(0, 4).map((pkg) => queryRegistry(pkg.name, timeoutMs, now)))
-  ]);
+  const results = await Promise.all(
+    packages.slice(0, 4).map((pkg) => queryRegistry(pkg.name, timeoutMs, now))
+  );
   packages.slice(0, 4).forEach((pkg, index) => {
-    const info = registryResults[index];
+    const info = results[index];
     if (info === null) {
       notes.push(`${pkg.name} was not found on the npm registry, or the lookup timed out`);
       return;
@@ -148,17 +217,13 @@ async function enrich(packages, timeoutMs = 2e3) {
       notes.push(`${pkg.name} latest version is marked deprecated`);
     }
   });
-  for (const [name, ids] of osvResults) {
-    if (ids && ids.length > 0) {
-      notes.push(`${name} has open advisories: ${ids.join(", ")}`);
-    }
-  }
   return notes;
 }
-var CACHE_TTL_MS;
+var CACHE_TTL_MS, SEVERITY_RANK;
 var init_osv = __esm({
   "src/supply-chain/osv.js"() {
     CACHE_TTL_MS = 6 * 60 * 60 * 1e3;
+    SEVERITY_RANK = { CRITICAL: 0, HIGH: 1, MODERATE: 2, MEDIUM: 2, LOW: 3 };
   }
 });
 
@@ -4060,6 +4125,18 @@ async function main() {
     allReasons.push(...verdict.reasons);
     allPackages.push(...verdict.packages.filter((pkg) => pkg.kind === "registry"));
   }
+  const pinned = allPackages.filter((pkg) => /^\d+\.\d+\.\d+/.test(pkg.version ?? ""));
+  if (config.network && !shouldPrompt && pinned.length > 0) {
+    try {
+      const { advisoryNotes: advisoryNotes2 } = await Promise.resolve().then(() => (init_osv(), osv_exports));
+      const notes = await advisoryNotes2(pinned, 2e3);
+      if (notes.length > 0) {
+        shouldPrompt = true;
+        allReasons.push(...notes);
+      }
+    } catch {
+    }
+  }
   if (!shouldPrompt) {
     if (allReasons.length > 0) {
       emitAdditionalContext("PreToolUse", `guardrails-js note: ${allReasons.join("; ")}.`);
@@ -4068,12 +4145,28 @@ async function main() {
   }
   if (config.network && allPackages.length > 0) {
     try {
-      const { enrich: enrich2 } = await Promise.resolve().then(() => (init_osv(), osv_exports));
-      const extra = await enrich2(allPackages, 2e3);
-      allReasons.push(...extra);
+      const { enrich: enrich2, advisoryNotes: advisoryNotes2 } = await Promise.resolve().then(() => (init_osv(), osv_exports));
+      const [registryNotes, advisories] = await Promise.all([
+        enrich2(allPackages, 2e3),
+        // Skip the ones already checked above, so nothing is said twice.
+        advisoryNotes2(
+          allPackages.filter((pkg) => !pinned.includes(pkg)),
+          2e3
+        )
+      ]);
+      allReasons.push(...registryNotes, ...advisories);
     } catch {
     }
   }
+  const seen = /* @__PURE__ */ new Set();
+  const reasons = allReasons.filter((reason) => {
+    const key = reason.replace(/\s+/g, " ").trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  allReasons.length = 0;
+  allReasons.push(...reasons);
   const bullets = allReasons.map((reason) => `  - ${reason}`).join("\n");
   const names = allPackages.map((pkg) => pkg.name).join(", ") || "this command";
   ask(

@@ -56,6 +56,25 @@ export async function main() {
     allPackages.push(...verdict.packages.filter((pkg) => pkg.kind === 'registry'));
   }
 
+  // A pinned version is the one case where an advisory lookup gives a
+  // definitive answer, so it is allowed to raise a prompt on its own. Without
+  // this, installing a known vulnerable version of a package everyone trusts
+  // passes every offline signal and nothing is ever said about it.
+  const pinned = allPackages.filter((pkg) => /^\d+\.\d+\.\d+/.test(pkg.version ?? ''));
+
+  if (config.network && !shouldPrompt && pinned.length > 0) {
+    try {
+      const { advisoryNotes } = await import('../supply-chain/osv.js');
+      const notes = await advisoryNotes(pinned, 2000);
+      if (notes.length > 0) {
+        shouldPrompt = true;
+        allReasons.push(...notes);
+      }
+    } catch {
+      // Offline verdict stands on its own.
+    }
+  }
+
   if (!shouldPrompt) {
     if (allReasons.length > 0) {
       emitAdditionalContext('PreToolUse', `guardrails-js note: ${allReasons.join('; ')}.`);
@@ -65,13 +84,31 @@ export async function main() {
 
   if (config.network && allPackages.length > 0) {
     try {
-      const { enrich } = await import('../supply-chain/osv.js');
-      const extra = await enrich(allPackages, 2000);
-      allReasons.push(...extra);
+      const { enrich, advisoryNotes } = await import('../supply-chain/osv.js');
+      const [registryNotes, advisories] = await Promise.all([
+        enrich(allPackages, 2000),
+        // Skip the ones already checked above, so nothing is said twice.
+        advisoryNotes(
+          allPackages.filter((pkg) => !pinned.includes(pkg)),
+          2000,
+        ),
+      ]);
+      allReasons.push(...registryNotes, ...advisories);
     } catch {
       // Offline verdict stands on its own.
     }
   }
+
+  // Advisories can arrive from both the targeted lookup and the enrichment.
+  const seen = new Set();
+  const reasons = allReasons.filter((reason) => {
+    const key = reason.replace(/\s+/g, ' ').trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  allReasons.length = 0;
+  allReasons.push(...reasons);
 
   const bullets = allReasons.map((reason) => `  - ${reason}`).join('\n');
   const names = allPackages.map((pkg) => pkg.name).join(', ') || 'this command';
