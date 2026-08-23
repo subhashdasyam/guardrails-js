@@ -15474,7 +15474,11 @@ function analyze(options) {
     isTainted: (node) => isTaintedExpr(node, tainted),
     describe: (node) => describeSource(node, tainted),
     hasGuardInScope: (node, patterns) => hasGuard(functionFor(node), patterns),
-    taintedNames: tainted
+    functionFor,
+    taintedNames: tainted,
+    // Scratch space for rules that need to remember something across nodes in
+    // one file, such as "only report the first route in this file".
+    state: /* @__PURE__ */ new Map()
   };
   const suppressions = collectSuppressions(ast, source);
   const findings = [];
@@ -16476,12 +16480,826 @@ var PROXY_01 = {
 };
 var secrets_config_default = [SECRET_01, TLS_01, CORS_01, ERR_01, PROXY_01];
 
-// src/rules/index.js
-var RULES = [...injection_default, ...ssrf_default, ...deserialization_default, ...secrets_config_default];
-var RULES_BY_ID = new Map(RULES.map((rule) => [rule.id, rule]));
-var PACKS = {
-  "node-core": [...injection_default, ...ssrf_default, ...deserialization_default, ...secrets_config_default].map((r) => r.id)
+// src/rules/node-core/prototype-pollution.js
+var DANGEROUS_KEYS = ["__proto__", "prototype", "constructor"];
+function hasComputedAssignmentToParam(fnNode) {
+  let found = false;
+  walk(fnNode, (node) => {
+    if (found) return false;
+    if (node.type !== "AssignmentExpression") return void 0;
+    const left = node.left;
+    if ((left.type === "MemberExpression" || left.type === "OptionalMemberExpression") && left.computed) {
+      found = true;
+    }
+    return void 0;
+  });
+  return found;
+}
+function callsItself(fnNode, name) {
+  if (!name) return false;
+  let found = false;
+  walk(fnNode, (node) => {
+    if (found) return false;
+    if (node.type !== "CallExpression" && node.type !== "OptionalCallExpression") return void 0;
+    if (memberName(node.callee) === name) found = true;
+    return void 0;
+  });
+  return found;
+}
+var PP_01 = {
+  id: "PP-01",
+  title: "Recursive merge with no key filter",
+  severity: "high",
+  owasp2025: "A01",
+  cwe: ["CWE-1321"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /for\s*\(\s*(const|let|var)?\s*[A-Za-z0-9_$]+\s+in\s+/,
+  nodeTypes: ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"],
+  match(node, ctx, parent) {
+    const name = node.id?.name ?? (parent?.type === "VariableDeclarator" && parent.id?.type === "Identifier" ? parent.id.name : null);
+    let hasForIn = false;
+    walk(node, (child) => {
+      if (child.type === "ForInStatement") hasForIn = true;
+      return void 0;
+    });
+    if (!hasForIn) return null;
+    if (!hasComputedAssignmentToParam(node)) return null;
+    if (!callsItself(node, name)) return null;
+    const body = ctx.source.slice(node.start, node.end);
+    if (/__proto__|hasOwnProperty|Object\.hasOwn|prototype|Object\.create\(null\)/.test(body)) {
+      return null;
+    }
+    return { node, name: name ?? "this function" };
+  },
+  message: (f) => `${f.name} copies every key of one object into another and recurses, with no check on the key name. A payload containing __proto__ writes onto Object.prototype and changes every object in the process.`,
+  fix: "for (const key of Object.keys(source)) {\n  if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;\n  // ...\n}"
 };
+var PP_02 = {
+  id: "PP-02",
+  title: "Request body merged into a long lived object",
+  severity: "medium",
+  owasp2025: "A01",
+  cwe: ["CWE-1321", "CWE-915"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /Object\.assign|\.\.\.\s*req\./,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    if (memberName(node.callee) !== "Object.assign") return null;
+    const target = node.arguments[0];
+    if (!target) return null;
+    if (target.type === "ObjectExpression") return null;
+    const source = node.arguments.slice(1).find((arg) => ctx.isTainted(arg));
+    if (!source) return null;
+    return { node: source, source: ctx.describe(source) };
+  },
+  message: (f) => `Object.assign copies ${f.source} into an object that outlives the request. Every key comes across, including ones you never meant to accept.`,
+  fix: 'const update = pick(req.body, ["displayName", "avatar"]);\nObject.assign(config, update);'
+};
+var LODASH_DEEP = ["merge", "mergeWith", "set", "setWith", "defaultsDeep", "assignInWith"];
+var PP_03 = {
+  id: "PP-03",
+  title: "Deep merge helper with user data",
+  severity: "high",
+  owasp2025: "A01",
+  cwe: ["CWE-1321"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /\b(merge|mergeWith|set|setWith|defaultsDeep|assignInWith)\s*\(/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    const method = lastSegment(full);
+    if (!LODASH_DEEP.includes(method)) return null;
+    const owner = full.includes(".") ? full.slice(0, full.lastIndexOf(".")) : null;
+    const looksLikeLodash = owner === null ? /lodash|\bmerge\b/.test(ctx.source) : /^(_|lodash|deepmerge)$/.test(owner);
+    if (!looksLikeLodash) return null;
+    const tainted = node.arguments.find((arg) => ctx.isTainted(arg));
+    if (!tainted) return null;
+    return { node: tainted, method, source: ctx.describe(tainted) };
+  },
+  message: (f) => `${f.method} walks nested keys from ${f.source}. A key of __proto__ or constructor.prototype reaches the prototype chain, and the fix is not a version bump.`,
+  fix: "Validate the shape first with a schema, then copy only the fields you declared."
+};
+var PP_04 = {
+  id: "PP-04",
+  title: "Prototype reached through a computed key",
+  severity: "high",
+  owasp2025: "A01",
+  cwe: ["CWE-1321"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  // The computed assignment shape has no keyword to look for, so the triage
+  // pass has to match `something[key] =` as well as the obvious gadget names.
+  prefilter: /__proto__|constructor\s*\]|\[\s*['"]constructor|prototype|\[[^\]\n]{1,60}\]\s*=[^=]/,
+  nodeTypes: ["AssignmentExpression", "MemberExpression", "OptionalMemberExpression"],
+  match(node, ctx) {
+    if (node.type === "AssignmentExpression") {
+      const left = node.left;
+      if (left.type !== "MemberExpression" && left.type !== "OptionalMemberExpression") return null;
+      if (!left.computed) return null;
+      if (!ctx.isTainted(left.property)) return null;
+      const fn = ctx.functionFor(node);
+      const body = ctx.source.slice(fn.start ?? 0, fn.end ?? ctx.source.length);
+      if (/__proto__|hasOwnProperty|Object\.hasOwn|Object\.create\(null\)|new Map\(/.test(body)) {
+        return null;
+      }
+      return {
+        node: left,
+        kind: `the key comes from ${ctx.describe(left.property)}`
+      };
+    }
+    const name = memberName(node);
+    if (!name) return null;
+    const tail = lastSegment(name);
+    if (!DANGEROUS_KEYS.includes(tail)) return null;
+    if (tail === "constructor") return null;
+    if (tail === "prototype" && !/constructor\s*\.\s*prototype/.test(name.replace(/\./g, " . "))) {
+      if (!name.includes("constructor.prototype")) return null;
+    }
+    return { node, kind: `it writes through ${tail}` };
+  },
+  message: (f) => `An object property is written where ${f.kind}. Setting __proto__ or constructor.prototype changes every object in the process, not just this one.`,
+  fix: "const store = Object.create(null);  // or a Map, which has no prototype to pollute"
+};
+var prototype_pollution_default = [PP_01, PP_02, PP_03, PP_04];
+
+// src/rules/node-auth/auth.js
+var JWT_OWNERS = /(^|\.)(jwt|jsonwebtoken|jose|JWT)$/i;
+function isJwtCall(node, method) {
+  const full = memberName(node.callee);
+  if (!full) return false;
+  if (lastSegment(full) !== method) return false;
+  const owner = full.slice(0, full.length - method.length - 1);
+  if (!owner) return false;
+  return JWT_OWNERS.test(owner) || /jwt/i.test(owner);
+}
+var JWT_01 = {
+  id: "JWT-01",
+  title: "JWT verified without pinning the algorithm",
+  severity: "high",
+  owasp2025: "A07",
+  cwe: ["CWE-347"],
+  api: "API2",
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /\bjwt\b|jsonwebtoken/i,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    if (!isJwtCall(node, "verify")) return null;
+    const options = node.arguments[2];
+    const algorithms = options?.type === "ObjectExpression" ? objectValue(options, "algorithms") : null;
+    if (!algorithms) {
+      return { node, kind: "no algorithms option is set" };
+    }
+    if (algorithms.type !== "ArrayExpression") {
+      return { node: algorithms, kind: "the algorithms list is not a fixed array" };
+    }
+    const values = algorithms.elements.map((el) => staticString(el)).filter(Boolean);
+    if (values.length !== algorithms.elements.length) {
+      return { node: algorithms, kind: "the algorithms list is built at runtime" };
+    }
+    return null;
+  },
+  message: (f) => `JWT is verified but ${f.kind}. The library then trusts the alg header in the token, which is chosen by whoever sent it.`,
+  fix: "jwt.verify(token, key, { algorithms: ['RS256'], issuer, audience })"
+};
+var JWT_02 = {
+  id: "JWT-02",
+  title: "JWT decoded but never verified",
+  severity: "high",
+  owasp2025: "A07",
+  cwe: ["CWE-347", "CWE-287"],
+  api: "API2",
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  fileWide: true,
+  prefilter: /\.decode\s*\(/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    if (!isJwtCall(node, "decode")) return null;
+    if (/\.verify\s*\(/.test(ctx.source)) return null;
+    return { node };
+  },
+  message: () => "jwt.decode reads the token without checking the signature. Anyone can edit the payload and re-encode it, so any decision made on these claims can be forged.",
+  fix: "const claims = jwt.verify(token, key, { algorithms: ['RS256'] });"
+};
+var JWT_03 = {
+  id: "JWT-03",
+  title: "JWT accepts the none algorithm",
+  severity: "critical",
+  owasp2025: "A07",
+  cwe: ["CWE-347"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /['"]none['"]/,
+  nodeTypes: ["ArrayExpression", "ObjectProperty", "Property"],
+  match(node, ctx) {
+    if (node.type === "ArrayExpression") {
+      const values = node.elements.map((el) => staticString(el));
+      if (!values.some((value2) => value2 && value2.toLowerCase() === "none")) return null;
+      if (!/algorithm/i.test(ctx.source)) return null;
+      return { node };
+    }
+    const key = node.key?.name ?? node.key?.value;
+    if (key !== "algorithm") return null;
+    const value = staticString(node.value);
+    if (!value || value.toLowerCase() !== "none") return null;
+    return { node };
+  },
+  message: () => "The none algorithm is allowed. A token with alg set to none has no signature at all, so anybody can mint one.",
+  fix: "algorithms: ['RS256']  // one family, and never none"
+};
+var HMAC_CALLS = ["createHmac", "sign", "createSignature"];
+var AUTH_01 = {
+  id: "AUTH-01",
+  title: "Signing key written into source",
+  severity: "high",
+  owasp2025: "A04",
+  cwe: ["CWE-798", "CWE-321"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /createHmac|jwt\.sign|\.sign\s*\(/i,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    const method = lastSegment(full);
+    if (!HMAC_CALLS.includes(method)) return null;
+    const secret = method === "createHmac" ? node.arguments[1] : node.arguments[1];
+    if (!secret) return null;
+    const literal = staticString(secret);
+    if (literal === null) return null;
+    if (literal.length === 0) return null;
+    return {
+      node: secret,
+      severityHint: fileLooksLikeTest(ctx.filePath) ? "low" : "high",
+      length: literal.length
+    };
+  },
+  message: (f) => `The signing key is a literal string in the source (${f.length} characters). Anyone who can read the repository can mint valid tokens.`,
+  fix: "const secret = process.env.JWT_SECRET;\nif (!secret) throw new Error('JWT_SECRET is not set');"
+};
+var SECURITY_VALUE_NAMES = /(token|secret|key|nonce|otp|salt|session|password|passcode|verifier|challenge|csrf|state|uuid|id)$/i;
+function securityContextName(parent) {
+  if (parent?.type === "VariableDeclarator" && parent.id?.type === "Identifier") return parent.id.name;
+  if (parent?.type === "ObjectProperty" || parent?.type === "Property") {
+    return parent.key?.name ?? parent.key?.value ?? null;
+  }
+  if (parent?.type === "AssignmentExpression") return memberName(parent.left);
+  return null;
+}
+var AUTH_02 = {
+  id: "AUTH-02",
+  title: "Security value from Math.random",
+  severity: "high",
+  owasp2025: "A04",
+  cwe: ["CWE-338", "CWE-330"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /Math\.random/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx, parent) {
+    if (memberName(node.callee) !== "Math.random") return null;
+    let name = securityContextName(parent);
+    if (!name) {
+      const lineStart = ctx.source.lastIndexOf("\n", node.start) + 1;
+      const before = ctx.source.slice(lineStart, node.start);
+      name = /(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*=/.exec(before)?.[1] ?? /([A-Za-z0-9_$.]+)\s*[:=]\s*$/.exec(before)?.[1] ?? null;
+    }
+    if (!name) return null;
+    const tail = lastSegment(name) ?? name;
+    if (!SECURITY_VALUE_NAMES.test(tail)) return null;
+    return { node, name: tail };
+  },
+  message: (f) => `${f.name} comes from Math.random, which is predictable. Given a few outputs an attacker can work out the rest.`,
+  fix: "crypto.randomBytes(32).toString('hex')  // or crypto.randomUUID()"
+};
+var CRYPTO_01 = {
+  id: "CRYPTO-01",
+  title: "Deprecated or unauthenticated cipher",
+  severity: "high",
+  owasp2025: "A04",
+  cwe: ["CWE-327"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /createCipher|createDecipher/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    const method = lastSegment(full);
+    if (method === "createCipher" || method === "createDecipher") {
+      return { node, kind: `${method} is deprecated and derives a key with no salt` };
+    }
+    if (method === "createCipheriv" || method === "createDecipheriv") {
+      const iv = node.arguments[2];
+      if (!iv) return null;
+      if (iv.type === "NullLiteral") return { node: iv, kind: "the initialisation vector is null" };
+      if (isLiteral(iv)) return { node: iv, kind: "the initialisation vector is a fixed literal" };
+      return null;
+    }
+    return null;
+  },
+  message: (f) => `${f.kind}. Encrypting two messages the same way lets an attacker compare them.`,
+  fix: "const iv = crypto.randomBytes(12);\nconst cipher = crypto.createCipheriv('aes-256-gcm', key, iv);"
+};
+var CRYPTO_02 = {
+  id: "CRYPTO-02",
+  title: "Broken cipher mode or algorithm",
+  severity: "high",
+  owasp2025: "A04",
+  cwe: ["CWE-327"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /ecb|\bdes\b|rc4|blowfish/i,
+  nodeTypes: ["StringLiteral"],
+  match(node, ctx, parent) {
+    const value = node.value;
+    if (typeof value !== "string") return null;
+    if (!/^[a-z0-9-]+$/i.test(value)) return null;
+    const broken = /(^|-)(ecb)(-|$)|^des(-|$)|^des-ede|^rc4|^bf-|^blowfish/i.test(value);
+    if (!broken) return null;
+    if (parent?.type !== "CallExpression" && parent?.type !== "OptionalCallExpression") return null;
+    const full = memberName(parent.callee);
+    if (!full || !/cipher|decipher|createHash|crypto/i.test(full)) return null;
+    return { node, algorithm: value };
+  },
+  message: (f) => `${f.algorithm} is broken. ECB leaks the shape of the plaintext, and DES, RC4, and Blowfish are all too weak to use now.`,
+  fix: "crypto.createCipheriv('aes-256-gcm', key, crypto.randomBytes(12))"
+};
+var FAST_HASHES = ["md5", "sha1", "sha224", "sha256", "sha384", "sha512"];
+var PASSWORD_NAMES = /(password|passwd|pwd|passphrase)/i;
+var PASS_01 = {
+  id: "PASS-01",
+  title: "Password stored with a fast hash",
+  severity: "high",
+  owasp2025: "A04",
+  cwe: ["CWE-916", "CWE-328"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /createHash|\bmd5\b|\bsha1\b/i,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    const method = lastSegment(full);
+    if (FAST_HASHES.includes(method.toLowerCase())) {
+      const arg2 = node.arguments[0];
+      if (arg2 && PASSWORD_NAMES.test(ctx.source.slice(arg2.start, arg2.end))) {
+        return { node: arg2, algorithm: method };
+      }
+      return null;
+    }
+    if (method !== "update") return null;
+    const arg = node.arguments[0];
+    if (!arg) return null;
+    if (!PASSWORD_NAMES.test(ctx.source.slice(arg.start, arg.end))) return null;
+    const chainSource = ctx.source.slice(node.start, node.end);
+    const algorithm = /createHash\(\s*['"]([a-z0-9-]+)['"]/i.exec(chainSource)?.[1];
+    if (!algorithm || !FAST_HASHES.includes(algorithm.toLowerCase())) return null;
+    return { node: arg, algorithm };
+  },
+  message: (f) => `Password is hashed with ${f.algorithm}, which is built to be fast. A consumer graphics card tries billions of guesses a second against it.`,
+  fix: "const hash = await argon2.hash(password);  // or bcrypt with cost 12 and above"
+};
+var PASS_02 = {
+  id: "PASS-02",
+  title: "Password hashing cost too low",
+  severity: "medium",
+  owasp2025: "A04",
+  cwe: ["CWE-916"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /bcrypt|scrypt|pbkdf2/i,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    if (!/bcrypt/i.test(full)) return null;
+    if (!["hash", "hashSync", "genSalt", "genSaltSync"].includes(lastSegment(full))) return null;
+    const costArg = lastSegment(full).startsWith("genSalt") ? node.arguments[0] : node.arguments[1];
+    if (!costArg) return null;
+    if (costArg.type !== "NumericLiteral") return null;
+    if (costArg.value >= 10) return null;
+    return { node: costArg, cost: costArg.value };
+  },
+  message: (f) => `bcrypt cost is ${f.cost}. Each step down halves the work an attacker has to do. Ten is the floor and twelve is the usual choice now.`,
+  fix: "await bcrypt.hash(password, 12)"
+};
+var SECRET_COMPARE_NAMES = /(token|secret|signature|hmac|digest|password|passwd|apikey|api_key|hash|otp|code|nonce)/i;
+var TIMING_01 = {
+  id: "TIMING-01",
+  title: "Secret compared with a normal equality check",
+  severity: "medium",
+  owasp2025: "A07",
+  cwe: ["CWE-208"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /(token|secret|signature|hmac|digest|apikey|api_key)/i,
+  nodeTypes: ["BinaryExpression"],
+  match(node, ctx) {
+    if (!["===", "==", "!==", "!="].includes(node.operator)) return null;
+    const left = ctx.source.slice(node.left.start, node.left.end);
+    const right = ctx.source.slice(node.right.start, node.right.end);
+    const leftIsSecret = SECRET_COMPARE_NAMES.test(left) && !isLiteral(node.left);
+    const rightIsSecret = SECRET_COMPARE_NAMES.test(right) && !isLiteral(node.right);
+    if (!leftIsSecret || !rightIsSecret) return null;
+    return { node };
+  },
+  message: () => "Comparing a secret with === stops at the first byte that differs, so the time it takes leaks how much of the guess was right.",
+  fix: "crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))  // check lengths first"
+};
+var COOKIE_01 = {
+  id: "COOKIE-01",
+  title: "Cookie missing its security flags",
+  severity: "medium",
+  owasp2025: "A07",
+  cwe: ["CWE-1004", "CWE-614", "CWE-1275"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /\.cookie\s*\(|httpOnly|sameSite/i,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    if (lastSegment(full) !== "cookie") return null;
+    if (!/^(res|reply|response)\b/.test(full)) return null;
+    const options = node.arguments[2];
+    const name = staticString(node.arguments[0]) ?? "this cookie";
+    const looksLikeSession = /sid|session|auth|token|jwt|login/i.test(name);
+    if (!options || options.type !== "ObjectExpression") {
+      return looksLikeSession ? { node, name, missing: ["httpOnly", "secure", "sameSite"] } : null;
+    }
+    const missing = ["httpOnly", "secure", "sameSite"].filter((flag) => {
+      const value = objectValue(options, flag);
+      if (value === null) return true;
+      return isFalse(value);
+    });
+    if (missing.length === 0) return null;
+    if (!looksLikeSession && missing.length < 3) return null;
+    return { node: options, name, missing };
+  },
+  message: (f) => `${f.name} is set without ${f.missing.join(", ")}. Without httpOnly any script on the page can read it, and without secure it travels in the clear.`,
+  fix: "res.cookie('sid', value, { httpOnly: true, secure: true, sameSite: 'lax' })"
+};
+var SESSION_IDENTITY = /^(req|request|ctx)\.session\.(user|userId|userID|uid|accountId|isAdmin|role)$/;
+var SESSION_01 = {
+  id: "SESSION-01",
+  title: "Session id not rotated at login",
+  severity: "medium",
+  owasp2025: "A07",
+  cwe: ["CWE-384"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /session\.(user|uid|accountId|isAdmin|role)/i,
+  nodeTypes: ["AssignmentExpression"],
+  match(node, ctx) {
+    const target = memberName(node.left);
+    if (!target || !SESSION_IDENTITY.test(target)) return null;
+    if (/\bregenerate\s*\(|\brotateSession\b|\bcycleSession\b/.test(ctx.source)) return null;
+    if (ctx.state.get("SESSION-01")) return null;
+    ctx.state.set("SESSION-01", true);
+    return { node };
+  },
+  message: () => "Identity is written into the existing session and the session id is never regenerated. An id planted before login still works after it, which is session fixation.",
+  fix: "req.session.regenerate((err) => {\n  if (err) return next(err);\n  req.session.userId = user.id;\n});"
+};
+var MUTATING_METHODS = ["post", "put", "patch", "delete"];
+var CSRF_MIDDLEWARE = /csurf|csrf|doubleCsrf|csrfProtection|@fastify\/csrf/i;
+var CSRF_01 = {
+  id: "CSRF-01",
+  title: "Cookie authenticated route with no CSRF protection",
+  severity: "medium",
+  owasp2025: "A01",
+  cwe: ["CWE-352"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /\.(post|put|patch|delete)\s*\(/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    if (!MUTATING_METHODS.includes(lastSegment(full))) return null;
+    if (!/^(app|router|server|api)\b/.test(full)) return null;
+    if (staticString(node.arguments[0]) === null) return null;
+    if (!/req\.session|req\.cookies|reply\.setCookie|res\.cookie/.test(ctx.source)) return null;
+    if (CSRF_MIDDLEWARE.test(ctx.source)) return null;
+    if (ctx.state.get("CSRF-01")) return null;
+    ctx.state.set("CSRF-01", true);
+    return { node, route: staticString(node.arguments[0]) };
+  },
+  message: (f) => `${f.route} changes state and this file authenticates with cookies, but no CSRF protection is set up. Another site can make this request in your users' browsers.`,
+  fix: "app.use(csrf({ cookie: true }));  // then send the token with each form, and check Origin as well"
+};
+var auth_default = [
+  JWT_01,
+  JWT_02,
+  JWT_03,
+  AUTH_01,
+  AUTH_02,
+  CRYPTO_01,
+  CRYPTO_02,
+  PASS_01,
+  PASS_02,
+  TIMING_01,
+  COOKIE_01,
+  SESSION_01,
+  CSRF_01
+];
+
+// src/rules/node-auth/access.js
+var LOOKUP_METHODS = [
+  "findById",
+  "findByPk",
+  "findUnique",
+  "findFirst",
+  "findOne",
+  "getById",
+  "findOneAndUpdate",
+  "findByIdAndUpdate",
+  "findByIdAndDelete"
+];
+var OWNERSHIP_KEYS = /(user|owner|org|orgId|tenant|account|team|customer|workspace|company|member)/i;
+var CURRENT_USER = /(req|request|ctx|context|session)\.(user|auth|session|principal)|currentUser|getUser|session\.userId/;
+var IDOR_01 = {
+  id: "IDOR-01",
+  title: "Record fetched by id with no ownership check",
+  severity: "medium",
+  owasp2025: "A01",
+  cwe: ["CWE-639", "CWE-863"],
+  api: "API1",
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /\.(findById|findByPk|findUnique|findFirst|findOne|getById|findByIdAndUpdate|findByIdAndDelete|findOneAndUpdate)\s*\(/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    if (!LOOKUP_METHODS.includes(lastSegment(full))) return null;
+    const first = node.arguments[0];
+    if (!first || !ctx.isTainted(first)) return null;
+    const callSource = ctx.source.slice(node.start, node.end);
+    if (OWNERSHIP_KEYS.test(callSource)) return null;
+    if (CURRENT_USER.test(callSource)) return null;
+    return { node: first, source: ctx.describe(first), model: full.split(".")[0] };
+  },
+  message: (f) => `${f.model} is looked up by an id from ${f.source} with nothing tying it to the caller. Changing the id in the request returns somebody else's record.`,
+  fix: "const invoice = await Invoice.findOne({ where: { id: req.params.id, orgId: req.user.orgId } });"
+};
+var ASSIGN_SINKS = ["create", "update", "updateOne", "save", "insert", "bulkCreate", "upsert"];
+var WHOLE_PAYLOAD = /^(req|request|ctx|context)\.(body|query|params)$|^(ctx|context)\.request\.body$/;
+var NOT_A_MODEL = /* @__PURE__ */ new Set([
+  "URL",
+  "URLSearchParams",
+  "Date",
+  "RegExp",
+  "Error",
+  "TypeError",
+  "RangeError",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "Promise",
+  "Buffer",
+  "Array",
+  "Object",
+  "String",
+  "Number",
+  "Boolean",
+  "Function",
+  "Proxy",
+  "Response",
+  "Request",
+  "Headers",
+  "FormData",
+  "Blob",
+  "File",
+  "AbortController",
+  "TextEncoder",
+  "TextDecoder",
+  "EventEmitter",
+  "Intl"
+]);
+function wholeRequestObject(node) {
+  if (!node) return false;
+  if (node.type === "Identifier") return true;
+  if (node.type !== "MemberExpression" && node.type !== "OptionalMemberExpression") return false;
+  return WHOLE_PAYLOAD.test(memberName(node) ?? "");
+}
+var MASS_01 = {
+  id: "MASS-01",
+  title: "Request body written straight into a model",
+  severity: "medium",
+  owasp2025: "A01",
+  cwe: ["CWE-915"],
+  api: "API3",
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /Object\.assign|\.(create|update|updateOne|save|insert|bulkCreate|upsert)\s*\(|new\s+[A-Z]/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression", "NewExpression"],
+  match(node, ctx) {
+    if (node.type === "NewExpression") {
+      const name = memberName(node.callee);
+      const constructorName = lastSegment(name) ?? "";
+      if (!name || !/^[A-Z]/.test(constructorName)) return null;
+      if (NOT_A_MODEL.has(constructorName)) return null;
+      const first = node.arguments[0];
+      if (!wholeRequestObject(first) || !ctx.isTainted(first)) return null;
+      return { node: first, source: ctx.describe(first), sink: `new ${lastSegment(name)}` };
+    }
+    const full = memberName(node.callee);
+    if (!full) return null;
+    const method = lastSegment(full);
+    if (full === "Object.assign") {
+      const tainted = node.arguments.slice(1).find((arg) => wholeRequestObject(arg) && ctx.isTainted(arg));
+      if (!tainted) return null;
+      return { node: tainted, source: ctx.describe(tainted), sink: "Object.assign" };
+    }
+    if (!ASSIGN_SINKS.includes(method)) return null;
+    const payload = node.arguments.find((arg) => wholeRequestObject(arg) && ctx.isTainted(arg));
+    if (!payload) return null;
+    return { node: payload, source: ctx.describe(payload), sink: full };
+  },
+  message: (f) => `${f.sink} takes ${f.source} whole. Adding "role": "admin" or "isVerified": true to the request body sets those fields too.`,
+  fix: "const { displayName, avatar } = UpdateUser.parse(req.body);\nawait user.update({ displayName, avatar });"
+};
+var SENSITIVE_ROUTE = /(admin|internal|delete|remove|purge|impersonate|billing|payout|refund|role|permission|settings\/security)/i;
+var AUTH_MIDDLEWARE = /requireAuth|isAuthenticated|ensureAuth|authenticate|authGuard|requireRole|requireAdmin|checkAuth|verifyToken|passport\.authenticate|@UseGuards|preHandler/;
+var AUTHZ_01 = {
+  id: "AUTHZ-01",
+  title: "Sensitive route with no middleware",
+  severity: "medium",
+  owasp2025: "A01",
+  cwe: ["CWE-862", "CWE-306"],
+  api: "API5",
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /\.(get|post|put|patch|delete|all)\s*\(/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    if (!["get", "post", "put", "patch", "delete", "all"].includes(lastSegment(full))) return null;
+    if (!/^(app|router|server|api)\b/.test(full)) return null;
+    const route = staticString(node.arguments[0]);
+    if (!route || !SENSITIVE_ROUTE.test(route)) return null;
+    if (node.arguments.length !== 2) return null;
+    if (!AUTH_MIDDLEWARE.test(ctx.source)) return null;
+    const callSource = ctx.source.slice(node.start, Math.min(node.end, node.start + 300));
+    if (AUTH_MIDDLEWARE.test(callSource)) return null;
+    return { node, route };
+  },
+  message: (f) => `${f.route} looks sensitive and is registered with a handler and no middleware, while this file uses auth middleware elsewhere. Check it is not open.`,
+  fix: "app.post('/admin/users/:id', requireAuth, requireRole('admin'), handler);"
+};
+var access_default = [IDOR_01, MASS_01, AUTHZ_01];
+
+// src/rules/node-dos/limits.js
+var NESTED_QUANTIFIER = /\((?:\?[:=!]|\?<[=!]?[A-Za-z]*>)?[^()]*[*+][^()]*\)\s*[*+]/;
+var OVERLAPPING_ALTERNATION = /\((?:\?[:=!])?[^()|]*\|[^()]*\)\s*[*+]/;
+var NESTED_BOUNDED = /\([^()]*\)\{\d+,\}\s*[*+]/;
+var REDOS_01 = {
+  id: "REDOS-01",
+  title: "Regular expression can backtrack forever",
+  severity: "medium",
+  owasp2025: "A10",
+  cwe: ["CWE-1333", "CWE-400"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /[*+]\s*\)?\s*[*+]|new RegExp/,
+  nodeTypes: ["RegExpLiteral", "NewExpression"],
+  match(node, ctx) {
+    if (node.type === "NewExpression") {
+      if (memberName(node.callee) !== "RegExp") return null;
+      const arg = node.arguments[0];
+      if (!arg || !ctx.isTainted(arg)) return null;
+      return {
+        node: arg,
+        kind: `the pattern comes from ${ctx.describe(arg)}`,
+        severityHint: "high"
+      };
+    }
+    const pattern = node.pattern ?? "";
+    if (pattern.length < 4) return null;
+    if (NESTED_QUANTIFIER.test(pattern)) {
+      return { node, kind: "a repeating group contains another repeat, such as (a+)+" };
+    }
+    if (OVERLAPPING_ALTERNATION.test(pattern)) {
+      return { node, kind: "a repeating group has overlapping alternatives, such as (a|aa)+" };
+    }
+    if (NESTED_BOUNDED.test(pattern)) {
+      return { node, kind: "an open ended repeat is nested inside another repeat" };
+    }
+    return null;
+  },
+  message: (f) => `This regular expression is dangerous because ${f.kind}. A crafted input a few dozen characters long can hang the event loop for minutes.`,
+  fix: "Simplify the pattern, cap the input length before matching, or use a linear time engine such as RE2."
+};
+var BODY_PARSERS = ["json", "urlencoded", "raw", "text"];
+var BODY_01 = {
+  id: "BODY-01",
+  title: "Body parser with no size limit",
+  severity: "medium",
+  owasp2025: "A10",
+  cwe: ["CWE-770", "CWE-400"],
+  api: "API4",
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /express\.(json|urlencoded|raw|text)|bodyParser\.(json|urlencoded|raw|text)/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    if (!/^(express|bodyParser|body_parser)\./.test(full)) return null;
+    if (!BODY_PARSERS.includes(lastSegment(full))) return null;
+    const options = node.arguments[0];
+    if (options?.type === "ObjectExpression" && objectValue(options, "limit")) return null;
+    return { node, parser: full };
+  },
+  message: (f) => `${f.parser} has no limit, so it defaults to 100kb for JSON and accepts whatever arrives for the others. One large request can take the process down.`,
+  fix: "app.use(express.json({ limit: '1mb' }));"
+};
+var UPLOAD_01 = {
+  id: "UPLOAD-01",
+  title: "File upload with no limits",
+  severity: "medium",
+  owasp2025: "A10",
+  cwe: ["CWE-434", "CWE-770"],
+  api: "API4",
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /multer|busboy|formidable|fastify-multipart/i,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    if (!/^(multer|busboy|formidable)$/i.test(lastSegment(full)) && !/multipart/i.test(full)) {
+      return null;
+    }
+    const options = node.arguments[0];
+    if (options?.type === "ObjectExpression") {
+      const limits = objectValue(options, "limits") ?? objectValue(options, "maxFileSize");
+      if (limits) return null;
+    }
+    return { node, library: lastSegment(full) };
+  },
+  message: (f) => `${f.library} is set up with no limits, so file size, file count, and field count are all unbounded. Also check the extension against an allowlist and generate the stored filename yourself.`,
+  fix: "multer({ dest: UPLOAD_DIR, limits: { fileSize: 5 * 1024 * 1024, files: 3 } })"
+};
+var ARCHIVE_ENTRY = /\b(entry|entryName|fileName|header)\b/;
+var CONTAINMENT = [
+  /\.startsWith$/,
+  /^path\.relative$/,
+  /\.relative$/,
+  /\bisPathInside$/i,
+  /\bsafeJoin$/i
+];
+var ZIP_01 = {
+  id: "ZIP-01",
+  title: "Archive entry written without a containment check",
+  severity: "high",
+  owasp2025: "A05",
+  cwe: ["CWE-22"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /entryName|extractAllTo|extractEntryTo|\bunzip|\badm-zip|\btar\b/i,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    if (["extractAllTo", "extractEntryTo"].includes(lastSegment(full))) {
+      if (ctx.hasGuardInScope(node, CONTAINMENT)) return null;
+      return { node, kind: `${lastSegment(full)} trusts the paths inside the archive` };
+    }
+    if (!["join", "resolve"].includes(lastSegment(full))) return null;
+    if (!/^path\./.test(full)) return null;
+    const usesEntry = node.arguments.some(
+      (arg) => ARCHIVE_ENTRY.test(ctx.source.slice(arg.start, arg.end))
+    );
+    if (!usesEntry) return null;
+    if (ctx.hasGuardInScope(node, CONTAINMENT)) return null;
+    return { node, kind: "an archive entry name is joined onto the output directory" };
+  },
+  message: (f) => `${f.kind}. An entry named ../../etc/cron.d/x writes outside the directory you chose, which is the zip slip bug.`,
+  fix: "const out = path.resolve(dir, entry.entryName);\nif (!out.startsWith(dir + path.sep)) throw new Error('unsafe entry');"
+};
+var SENSITIVE_ENDPOINT = /(login|signin|sign-in|register|signup|sign-up|reset|forgot|password|otp|verify|token|invite|magic)/i;
+var RATE_LIMITER = /rateLimit|express-rate-limit|rate-limiter|@fastify\/rate-limit|Throttler|slowDown|bottleneck|@nestjs\/throttler/i;
+var RATE_01 = {
+  id: "RATE-01",
+  title: "Authentication endpoint with no rate limit",
+  severity: "medium",
+  owasp2025: "A10",
+  cwe: ["CWE-770", "CWE-307"],
+  api: "API4",
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /(login|signin|register|reset|forgot|password|otp|magic)/i,
+  nodeTypes: ["CallExpression", "OptionalCallExpression"],
+  match(node, ctx) {
+    const full = memberName(node.callee);
+    if (!full) return null;
+    if (!["post", "put", "all"].includes(lastSegment(full))) return null;
+    if (!/^(app|router|server|api)\b/.test(full)) return null;
+    const route = staticString(node.arguments[0]);
+    if (!route || !SENSITIVE_ENDPOINT.test(route)) return null;
+    if (RATE_LIMITER.test(ctx.source)) return null;
+    if (ctx.state.get("RATE-01")) return null;
+    ctx.state.set("RATE-01", true);
+    return { node, route };
+  },
+  message: (f) => `${f.route} takes credentials and nothing in this file limits how often it can be called. Password guessing and account enumeration both need volume, and this gives it to them.`,
+  fix: "const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 });\napp.post('/login', limiter, handler);"
+};
+var limits_default = [REDOS_01, BODY_01, UPLOAD_01, ZIP_01, RATE_01];
+
+// src/rules/index.js
+var PACKS = {
+  "node-core": [...injection_default, ...ssrf_default, ...deserialization_default, ...secrets_config_default, ...prototype_pollution_default],
+  "node-auth": [...auth_default, ...access_default],
+  "node-dos": [...limits_default]
+};
+var RULES = Object.values(PACKS).flat();
+var RULES_BY_ID = new Map(RULES.map((rule) => [rule.id, rule]));
 
 // src/hooks/post-write.js
 var WATCHED_TOOLS = /* @__PURE__ */ new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);

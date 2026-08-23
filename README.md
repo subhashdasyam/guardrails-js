@@ -2,7 +2,7 @@
 
 A Claude Code plugin that tells Claude when the JavaScript it just wrote is unsafe or slow, so Claude fixes it in the same turn.
 
-**v0.1 works today**: 22 rules for Node and Express, the npm install gate, session priming, and the repo audit command. React, Vue, and the performance pack are next. The full design is in [docs/PLAN.md](docs/PLAN.md).
+**v0.2 works today**: 43 rules for Node, Express, Fastify, and NestJS, the npm install gate, session priming, and the repo audit command. React, Vue, and the performance pack are next. The full design is in [docs/PLAN.md](docs/PLAN.md).
 
 ## The problem
 
@@ -73,23 +73,56 @@ They use different hooks and do not fight each other. Run both.
 
 ## What it checks today
 
-22 rules, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/) and CWE.
+43 rules, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
 
-| Rule | What it catches | OWASP |
-|---|---|---|
-| SQL-01, SQL-02, SQL-03 | SQL built from request data, raw ORM queries, `$queryRawUnsafe` | A05 |
-| NOSQL-01, NOSQL-02 | Mongo operator injection, `$where` with user input | A05 |
-| CMD-01, CMD-02 | `exec` with a built string, `shell: true` on spawn | A05 |
-| PATH-01 | File paths from user input with no containment check | A05 |
-| SSTI-01 | Templates compiled from user input | A05 |
-| HTTP-01 | Header injection and open redirects | A05 |
-| SSRF-01, SSRF-02, SSRF-03 | Requests to user supplied URLs, redirect following, string based host blocking | A01 |
-| DESER-01 to DESER-04 | `node-serialize`, `vm` and `vm2`, computed `require`, unsafe YAML | A08, A05 |
-| SECRET-01 | Keys written into source | A04 |
-| TLS-01 | Certificate checking turned off | A02 |
-| CORS-01 | Any origin allowed with credentials | A02 |
-| ERR-01 | Stack traces sent to clients | A10 |
-| PROXY-01 | `trust proxy` set to true | A02 |
+Injection and interpreters, A05:
+
+| Rule | What it catches |
+|---|---|
+| SQL-01, SQL-02, SQL-03 | SQL built from request data, raw ORM queries, `$queryRawUnsafe` |
+| NOSQL-01, NOSQL-02 | Mongo operator injection, `$where` with user input |
+| CMD-01, CMD-02 | `exec` with a built string, `shell: true` on spawn |
+| PATH-01, ZIP-01 | Paths from user input, archive entries written outside the target directory |
+| SSTI-01 | Templates compiled from user input |
+| HTTP-01 | Header injection and open redirects |
+
+Access control and requests, A01:
+
+| Rule | What it catches |
+|---|---|
+| SSRF-01, SSRF-02, SSRF-03 | User supplied URLs, redirect following, string based host blocking |
+| IDOR-01 | Records fetched by id with nothing tying them to the caller |
+| MASS-01 | Request body written straight into a model |
+| AUTHZ-01 | Sensitive route registered with no middleware |
+| CSRF-01 | Cookie authenticated route with no CSRF protection |
+| PP-01 to PP-04 | Recursive merge, `Object.assign` from a body, lodash deep merge, computed key writes |
+
+Authentication and cryptography, A04 and A07:
+
+| Rule | What it catches |
+|---|---|
+| JWT-01, JWT-02, JWT-03 | Algorithm not pinned, `decode` used instead of `verify`, `none` allowed |
+| AUTH-01, AUTH-02 | Signing key in source, security values from `Math.random` |
+| CRYPTO-01, CRYPTO-02 | `createCipher`, fixed IV, ECB and other broken modes |
+| PASS-01, PASS-02 | Passwords through a fast hash, bcrypt cost below 10 |
+| TIMING-01 | Secrets compared with `===` |
+| COOKIE-01, SESSION-01 | Missing cookie flags, session id not rotated at login |
+| SECRET-01 | Keys written into source |
+
+Configuration and resource limits, A02 and A10:
+
+| Rule | What it catches |
+|---|---|
+| TLS-01 | Certificate checking turned off |
+| CORS-01 | Any origin allowed with credentials |
+| ERR-01 | Stack traces sent to clients |
+| PROXY-01 | `trust proxy` set to true |
+| REDOS-01 | Regular expressions that can backtrack forever |
+| BODY-01, UPLOAD-01 | Body parsers and file uploads with no size limit |
+| RATE-01 | Login and password reset endpoints with no rate limit |
+| DESER-01 to DESER-04 | `node-serialize`, `vm` and `vm2`, computed `require`, unsafe YAML |
+
+Rules that need to reason across functions to be sure, such as IDOR-01, AUTHZ-01, and CSRF-01, ship at medium severity and stay on the quiet channel. They are prompts to look, not accusations.
 
 For the record: there is no OWASP Top 10 2026. The 2025 list came out in November 2025 and is the current one. An LLM Top 10 2026 exists, but that is a separate project.
 
@@ -131,7 +164,7 @@ Nothing else ever leaves your machine. File contents are never sent anywhere.
 
 ```bash
 npm ci --ignore-scripts
-npm test              # 109 rule and engine tests
+npm test              # 187 rule and engine tests
 npm run build         # rebuild dist/, which is committed
 npm run check:dist    # fail if the committed bundle is stale
 npm run bench         # latency budget
@@ -146,7 +179,6 @@ Measured on this machine: 34 ms for a clean file, 48 ms when a rule fires. Most 
 
 | Version | What lands |
 |---|---|
-| v0.2 | Auth, crypto, access control, denial of service, prototype pollution |
 | v0.3 | React and Next.js, including the middleware and server action rules |
 | v0.4 | Vue and Nuxt, with real template parsing |
 | v0.5 | Performance rules |

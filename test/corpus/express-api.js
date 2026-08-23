@@ -5,6 +5,8 @@
 import express from 'express';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import csurf from 'csurf';
+import rateLimit from 'express-rate-limit';
 import { execFile } from 'node:child_process';
 import { z } from 'zod';
 
@@ -14,7 +16,10 @@ const ALLOWED_HOSTS = new Set(['api.partner.example', 'cdn.partner.example']);
 const SORT_COLUMNS = { name: 'name', created: 'created_at' };
 
 app.use(express.json({ limit: '512kb' }));
+app.use(csurf({ cookie: { httpOnly: true, secure: true, sameSite: 'lax' } }));
 app.set('trust proxy', 1);
+
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 });
 
 const CreateUser = z.object({
   email: z.string().email(),

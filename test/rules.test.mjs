@@ -4,7 +4,12 @@ import assert from 'node:assert/strict';
 import { analyze } from '../src/engine/analyze.js';
 import { loadConfig } from '../src/engine/config.js';
 import { RULES } from '../src/rules/index.js';
-import cases from './cases/node-core.js';
+import nodeCore from './cases/node-core.js';
+import nodeAuth from './cases/node-auth.js';
+import nodeDos from './cases/node-dos.js';
+import prototypePollution from './cases/prototype-pollution.js';
+
+const cases = [...nodeCore, ...nodeAuth, ...nodeDos, ...prototypePollution];
 
 const config = loadConfig('/nonexistent-so-defaults-apply');
 

@@ -97,7 +97,11 @@ export function analyze(options) {
     isTainted: (node) => isTaintedExpr(node, tainted),
     describe: (node) => describeSource(node, tainted),
     hasGuardInScope: (node, patterns) => hasGuard(functionFor(node), patterns),
+    functionFor,
     taintedNames: tainted,
+    // Scratch space for rules that need to remember something across nodes in
+    // one file, such as "only report the first route in this file".
+    state: new Map(),
   };
 
   const suppressions = collectSuppressions(ast, source);
