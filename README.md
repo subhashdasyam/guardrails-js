@@ -2,7 +2,7 @@
 
 A Claude Code plugin that tells Claude when the JavaScript it just wrote is unsafe or slow, so Claude fixes it in the same turn.
 
-**v0.3 works today**: 52 rules covering Node, Express, Fastify, NestJS, React, and Next.js, plus dependency version checks, the npm install gate, session priming, and the repo audit command. Vue and the performance pack are next. The full design is in [docs/PLAN.md](docs/PLAN.md).
+**v0.4 works today**: 57 rules covering Node, Express, Fastify, NestJS, React, Next.js, Vue, and Nuxt, plus dependency version checks, the npm install gate, session priming, and the repo audit command. The performance pack is next. The full design is in [docs/PLAN.md](docs/PLAN.md).
 
 ## The problem
 
@@ -73,7 +73,7 @@ They use different hooks and do not fight each other. Run both.
 
 ## What it checks today
 
-52 rules, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
+57 rules, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/), CWE, and where it fits the OWASP API Top 10.
 
 Injection and interpreters, A05:
 
@@ -134,6 +134,16 @@ React and Next.js:
 | SERVER-ACTION | A `'use server'` function with no auth check, which is a public endpoint |
 | NEXT-IMG | Image optimizer configured to fetch from any host |
 
+Vue and Nuxt:
+
+| Rule | What it catches |
+|---|---|
+| XSS-03 | `v-html` with no sanitiser |
+| VUE-URL | A bound `:href` or `:src` with no protocol check |
+| VUE-SSR | A Vue template compiled from a string that came from outside |
+| VITE-HOST | A dev server bound to every interface |
+| NUXT-ROUTE-RULES | Route rules covering a sensitive path, which is rendering config and not authorization |
+
 Dependency versions, A03. Some problems are not in your code at all, so these read the lockfile:
 
 | Rule | What it catches |
@@ -144,6 +154,8 @@ Dependency versions, A03. Some problems are not in your code at all, so these re
 | VITE-VER | Vite dev server arbitrary file read (CVE-2025-30208, CVE-2025-31125) |
 
 Version checks read the lockfile when there is one, because that is the version you actually installed. With no lockfile they fall back to the lowest version the range allows and drop a severity level, since a range such as `^15.1.0` may already resolve to something patched.
+
+Vue single file components are handled in two halves. The `<script>` block is parsed properly, with byte offsets preserved so line numbers need no mapping. The `<template>` block goes through a small attribute scanner rather than the real Vue compiler, which keeps the bundle less than half the size it would otherwise be. The scanner handles nesting, quoted values, comments, and shorthand bindings, and it does not handle dynamic attribute names such as `:[key]`. Those come out as no match rather than a wrong match, so the failure direction is a missed finding and never a false one.
 
 Rules that need to reason across functions to be sure, such as IDOR-01, AUTHZ-01, and CSRF-01, ship at medium severity and stay on the quiet channel. They are prompts to look, not accusations.
 
@@ -187,7 +199,7 @@ Nothing else ever leaves your machine. File contents are never sent anywhere.
 
 ```bash
 npm ci --ignore-scripts
-npm test              # 223 rule, engine, and dependency tests
+npm test              # 240 rule, engine, and dependency tests
 npm run build         # rebuild dist/, which is committed
 npm run check:dist    # fail if the committed bundle is stale
 npm run bench         # latency budget
@@ -202,7 +214,6 @@ Measured on this machine: 34 ms for a clean file, 48 ms when a rule fires. Most 
 
 | Version | What lands |
 |---|---|
-| v0.4 | Vue and Nuxt, with real template parsing |
 | v0.5 | Performance rules |
 | v1.0 | Published to the marketplace |
 

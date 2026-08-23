@@ -7,13 +7,15 @@ import auth from './node-auth/auth.js';
 import access from './node-auth/access.js';
 import limits from './node-dos/limits.js';
 import xss from './react/xss.js';
-import next from './react/next.js';
+import nextRules from './react/next.js';
+import vueRules from './vue/vue.js';
 
 export const PACKS = {
   'node-core': [...injection, ...ssrf, ...deserialization, ...secretsConfig, ...prototypePollution],
   'node-auth': [...auth, ...access],
   'node-dos': [...limits],
-  react: [...xss, ...next],
+  react: [...xss, ...nextRules],
+  vue: [...vueRules],
 };
 
 export const RULES = Object.values(PACKS).flat();

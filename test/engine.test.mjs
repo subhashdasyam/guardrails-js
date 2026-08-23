@@ -65,6 +65,67 @@ test('vue script extraction keeps line numbers', () => {
   assert.ok(!code.includes('template'));
 });
 
+test('vue template scanning', async () => {
+  const { scanTemplate, extractTemplateBlock, bindingName } = await import(
+    '../src/engine/vue-template.js'
+  );
+
+  const source = [
+    '<template>',
+    '  <!-- a comment with <fake> inside -->',
+    '  <div class="wrap" v-html="body">',
+    '    <a :href="item.url" target="_blank">go</a>',
+    '    <img src="/logo.png" alt="a > sign in text" />',
+    '    <template v-if="ok"><span>{{ x }}</span></template>',
+    '  </div>',
+    '</template>',
+    '',
+    '<script setup>',
+    'const body = 1;',
+    '</script>',
+  ].join('\n');
+
+  const block = extractTemplateBlock(source);
+  assert.ok(block, 'the template block is found');
+  assert.ok(!block.content.includes('const body'), 'the script block is not part of it');
+
+  const elements = scanTemplate(source);
+  const tags = elements.map((element) => element.tagName);
+  assert.deepEqual(tags, ['div', 'a', 'img', 'template', 'span']);
+
+  const div = elements[0];
+  const vHtml = div.attributes.find((attribute) => attribute.name === 'v-html');
+  assert.equal(vHtml.value, 'body');
+  assert.equal(source.slice(vHtml.valueStart, vHtml.valueStart + 4), 'body');
+
+  const link = elements[1];
+  assert.equal(link.attributes.find((a) => a.name === ':href').value, 'item.url');
+  assert.equal(link.attributes.find((a) => a.name === 'target').value, '_blank');
+
+  const img = elements[2];
+  assert.equal(
+    img.attributes.find((a) => a.name === 'alt').value,
+    'a > sign in text',
+    'a greater than sign inside a quoted value does not end the tag',
+  );
+
+  assert.equal(bindingName(':href'), 'href');
+  assert.equal(bindingName('v-bind:href'), 'href');
+  assert.equal(bindingName('href'), 'href');
+});
+
+test('a vue file with no script block still gets template rules', async () => {
+  const source = '<template>\n  <div v-html="body" />\n</template>\n';
+  const { findings } = analyze({
+    source,
+    filePath: 'src/Only.vue',
+    config,
+    rules: RULES,
+    wholeFile: true,
+  });
+  assert.ok(findings.some((finding) => finding.ruleId === 'XSS-03'));
+});
+
 test('taint flows through destructuring and template strings', () => {
   const code = `
     const { id } = req.query;

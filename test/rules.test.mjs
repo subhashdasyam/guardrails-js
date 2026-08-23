@@ -9,8 +9,9 @@ import nodeAuth from './cases/node-auth.js';
 import nodeDos from './cases/node-dos.js';
 import prototypePollution from './cases/prototype-pollution.js';
 import react from './cases/react.js';
+import vue from './cases/vue.js';
 
-const cases = [...nodeCore, ...nodeAuth, ...nodeDos, ...prototypePollution, ...react];
+const cases = [...nodeCore, ...nodeAuth, ...nodeDos, ...prototypePollution, ...react, ...vue];
 
 const config = loadConfig('/nonexistent-so-defaults-apply');
 
@@ -70,13 +71,18 @@ test('rule metadata is complete', () => {
   const severities = new Set(['critical', 'high', 'medium', 'low', 'perf']);
 
   for (const rule of RULES) {
-    assert.match(rule.id, /^[A-Z][A-Z0-9]*-[A-Z0-9]+$/, `${rule.id} does not look like a rule id`);
+    assert.match(
+      rule.id,
+      /^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+$/,
+      `${rule.id} does not look like a rule id`,
+    );
     assert.ok(rule.title, `${rule.id} has no title`);
     assert.ok(severities.has(rule.severity), `${rule.id} has severity ${rule.severity}`);
     assert.ok(rule.owasp2025, `${rule.id} has no OWASP category`);
     assert.ok(Array.isArray(rule.cwe) && rule.cwe.length > 0, `${rule.id} has no CWE`);
     assert.ok(rule.fix, `${rule.id} has no fix`);
-    assert.ok(typeof rule.match === 'function', `${rule.id} has no match function`);
+    const matcher = rule.target === 'template' ? rule.matchTemplate : rule.match;
+    assert.ok(typeof matcher === 'function', `${rule.id} has no matcher`);
     assert.match(rule.owasp2025, /^A(0[1-9]|10)$/, `${rule.id} OWASP id looks wrong`);
   }
 });

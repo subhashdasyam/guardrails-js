@@ -332,8 +332,8 @@ var require_lib = __commonJS({
         referenceName
       }) => `Assigning to '${referenceName}' in strict mode.`,
       StrictEvalArgumentsBinding: ({
-        bindingName
-      }) => `Binding '${bindingName}' in strict mode.`,
+        bindingName: bindingName2
+      }) => `Binding '${bindingName2}' in strict mode.`,
       StrictFunction: "In strict mode code, functions can only be declared at top level or inside a block.",
       StrictNumericEscape: "The only valid numeric escape in strict mode is '\\0'.",
       StrictOctalLiteral: "Legacy octal literals are not allowed in strict mode.",
@@ -15001,6 +15001,146 @@ function objectValue(objectNode, name) {
   return prop ? prop.value : null;
 }
 
+// src/engine/vue-template.js
+var VOID_ELEMENTS = /* @__PURE__ */ new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "param",
+  "source",
+  "track",
+  "wbr"
+]);
+function extractTemplateBlock(source) {
+  const open = /<template(\s[^>]*)?>/i.exec(source);
+  if (!open) return null;
+  const contentStart = open.index + open[0].length;
+  let depth = 1;
+  let cursor = contentStart;
+  const tag = /<\/?template(\s[^>]*)?>/gi;
+  tag.lastIndex = contentStart;
+  let match;
+  while ((match = tag.exec(source)) !== null) {
+    if (match[0].startsWith("</")) {
+      depth -= 1;
+      if (depth === 0) {
+        return { start: contentStart, end: match.index, content: source.slice(contentStart, match.index) };
+      }
+    } else {
+      depth += 1;
+    }
+    cursor = tag.lastIndex;
+  }
+  return { start: contentStart, end: source.length, content: source.slice(contentStart) };
+}
+function parseAttributes(text, base) {
+  const attributes = [];
+  let i = 0;
+  while (i < text.length) {
+    while (i < text.length && /[\s/]/.test(text[i])) i += 1;
+    if (i >= text.length) break;
+    const nameStart = i;
+    while (i < text.length && !/[\s=/>]/.test(text[i])) i += 1;
+    const name = text.slice(nameStart, i);
+    if (!name) break;
+    let value = null;
+    let valueStart = null;
+    let lookahead = i;
+    while (lookahead < text.length && /\s/.test(text[lookahead])) lookahead += 1;
+    if (text[lookahead] === "=") {
+      lookahead += 1;
+      while (lookahead < text.length && /\s/.test(text[lookahead])) lookahead += 1;
+      const quote = text[lookahead];
+      if (quote === '"' || quote === "'") {
+        const close = text.indexOf(quote, lookahead + 1);
+        if (close !== -1) {
+          valueStart = base + lookahead + 1;
+          value = text.slice(lookahead + 1, close);
+          i = close + 1;
+        } else {
+          i = lookahead + 1;
+        }
+      } else {
+        const valueEnd = (() => {
+          let j = lookahead;
+          while (j < text.length && !/[\s>]/.test(text[j])) j += 1;
+          return j;
+        })();
+        valueStart = base + lookahead;
+        value = text.slice(lookahead, valueEnd);
+        i = valueEnd;
+      }
+    }
+    attributes.push({ name, value, nameStart: base + nameStart, valueStart });
+  }
+  return attributes;
+}
+function scanTemplate(source) {
+  const block = extractTemplateBlock(source);
+  if (!block) return [];
+  const elements = [];
+  const content = block.content;
+  let i = 0;
+  while (i < content.length) {
+    const open = content.indexOf("<", i);
+    if (open === -1) break;
+    if (content.startsWith("<!--", open)) {
+      const close = content.indexOf("-->", open);
+      i = close === -1 ? content.length : close + 3;
+      continue;
+    }
+    if (content[open + 1] === "/" || content[open + 1] === "!") {
+      const close = content.indexOf(">", open);
+      i = close === -1 ? content.length : close + 1;
+      continue;
+    }
+    let j = open + 1;
+    let quote = null;
+    while (j < content.length) {
+      const ch = content[j];
+      if (quote) {
+        if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === ">") {
+        break;
+      }
+      j += 1;
+    }
+    if (j >= content.length) break;
+    const raw = content.slice(open + 1, j);
+    const nameMatch = /^[A-Za-z][\w.-]*/.exec(raw);
+    if (!nameMatch) {
+      i = j + 1;
+      continue;
+    }
+    const tagName = nameMatch[0];
+    const attributeText = raw.slice(tagName.length);
+    const attributes = parseAttributes(attributeText, block.start + open + 1 + tagName.length);
+    elements.push({
+      tagName,
+      attributes,
+      start: block.start + open,
+      end: block.start + j + 1,
+      selfClosing: raw.trimEnd().endsWith("/") || VOID_ELEMENTS.has(tagName.toLowerCase())
+    });
+    i = j + 1;
+  }
+  return elements;
+}
+function bindingName(attributeName) {
+  if (attributeName.startsWith("v-bind:")) return attributeName.slice(7);
+  if (attributeName.startsWith(":")) return attributeName.slice(1);
+  return attributeName;
+}
+
 // src/engine/taint.js
 var TAINT_ROOTS = [
   // Express, Koa, Fastify, Nest
@@ -15436,13 +15576,26 @@ function analyze(options) {
   if (enabled.length === 0) return { findings: [] };
   const candidates = prefilter(source, enabled);
   if (candidates.length === 0) return { findings: [] };
+  const isVue = /\.vue$/i.test(String(filePath));
   const parsed = parseSource(source, filePath);
-  if (parsed.error) return { findings: [], parseError: parsed.error };
-  const { ast, language } = parsed;
-  const active = candidates.filter((rule) => languageMatches(rule, language));
-  if (active.length === 0) return { findings: [] };
+  if (parsed.error && !isVue) return { findings: [], parseError: parsed.error };
+  const ast = parsed.ast ?? {
+    type: "Program",
+    body: [],
+    directives: [],
+    comments: [],
+    start: 0,
+    end: source.length
+  };
+  const language = parsed.language ?? "js";
+  const templateRules = isVue ? candidates.filter((rule) => rule.target === "template") : [];
+  const active = candidates.filter(
+    (rule) => rule.target !== "template" && languageMatches(rule, language)
+  );
+  if (active.length === 0 && templateRules.length === 0) return { findings: [] };
   const byNodeType = /* @__PURE__ */ new Map();
   for (const rule of active) {
+    if (rule.target === "template") continue;
     for (const type of rule.nodeTypes ?? ["CallExpression"]) {
       if (!byNodeType.has(type)) byNodeType.set(type, []);
       byNodeType.get(type).push(rule);
@@ -15520,6 +15673,46 @@ function analyze(options) {
     }
     return void 0;
   });
+  if (templateRules.length > 0) {
+    const elements = scanTemplate(source);
+    for (const element of elements) {
+      for (const rule of templateRules) {
+        let hit;
+        try {
+          hit = rule.matchTemplate(element, ctx);
+        } catch {
+          continue;
+        }
+        if (!hit) continue;
+        const offset = hit.offset ?? element.start;
+        if (!wholeFile && changed && (offset < changed.start || offset > changed.end)) continue;
+        const line = lineOf(source, offset);
+        const key = `${rule.id}:${line}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (suppressions.isSuppressed(rule.id, line)) continue;
+        const severity = config.severityFor({
+          ...rule,
+          severity: hit.severityHint ?? rule.severity
+        });
+        if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+        findings.push({
+          ruleId: rule.id,
+          title: rule.title,
+          severity,
+          owasp2025: rule.owasp2025,
+          cwe: rule.cwe ?? [],
+          api: rule.api ?? null,
+          line,
+          column: 1,
+          evidence: lineText(source, line),
+          message: typeof rule.message === "function" ? rule.message(hit) : rule.message,
+          fix: rule.fix,
+          filePath
+        });
+      }
+    }
+  }
   for (const missing of suppressions.missingReason) {
     findings.push({
       ruleId: "GJ-IGNORE",
@@ -17840,12 +18033,147 @@ var NEXT_IMG = {
 };
 var next_default = [NEXT_MW, SERVER_ACTION, NEXT_IMG];
 
+// src/rules/vue/vue.js
+var SANITIZER = /(DOMPurify|purify|sanitize|xss|clean)\s*[.(]/i;
+var XSS_03 = {
+  id: "XSS-03",
+  title: "Unsanitised HTML rendered by Vue",
+  severity: "high",
+  owasp2025: "A05",
+  cwe: ["CWE-79"],
+  languages: ["vue"],
+  target: "template",
+  prefilter: /v-html/,
+  matchTemplate(element, ctx) {
+    const attribute = element.attributes.find(
+      (candidate) => candidate.name === "v-html" || candidate.name === "v-html.prop"
+    );
+    if (!attribute || !attribute.value) return null;
+    if (SANITIZER.test(attribute.value)) return null;
+    return {
+      offset: attribute.valueStart ?? attribute.nameStart,
+      expression: attribute.value.slice(0, 60)
+    };
+  },
+  message: (f) => `v-html renders ${f.expression} as raw HTML. Vue escapes everything else for you, and this is the one place it does not.`,
+  fix: '<div>{{ comment }}</div>  <!-- or v-html="sanitize(comment)" when markup is genuinely needed -->'
+};
+var URL_ATTRIBUTES2 = /* @__PURE__ */ new Set(["href", "src", "action", "formaction", "poster", "to"]);
+var URL_GUARD2 = /startsWith\(\s*['"]https?:|new URL\(|\^https\?:|isSafeUrl|sanitizeUrl/;
+var VUE_URL = {
+  id: "VUE-URL",
+  title: "Bound link target with no protocol check",
+  severity: "medium",
+  owasp2025: "A05",
+  cwe: ["CWE-79", "CWE-601"],
+  languages: ["vue"],
+  target: "template",
+  prefilter: /:href|:src|v-bind:href|v-bind:src|:action/,
+  matchTemplate(element, ctx) {
+    for (const attribute of element.attributes) {
+      const name = bindingName(attribute.name).toLowerCase();
+      if (!URL_ATTRIBUTES2.has(name)) continue;
+      if (attribute.name === name) continue;
+      if (!attribute.value) continue;
+      if (attribute.value.startsWith("'/") || attribute.value.startsWith('"/')) continue;
+      if (!/url|href|link|redirect|website|homepage|site/i.test(attribute.value)) continue;
+      if (URL_GUARD2.test(ctx.source)) continue;
+      return {
+        offset: attribute.valueStart ?? attribute.nameStart,
+        attribute: name,
+        expression: attribute.value.slice(0, 60)
+      };
+    }
+    return null;
+  },
+  message: (f) => `${f.attribute} is bound to ${f.expression} with no protocol check. A value beginning with javascript: runs as script when someone clicks it.`,
+  fix: "const safe = computed(() => /^https?:\\/\\//.test(item.url) ? item.url : '#');"
+};
+var COMPILE_CALLS = ["compile", "compileToFunction", "createSSRApp", "createApp"];
+var VUE_SSR = {
+  id: "VUE-SSR",
+  title: "Vue template compiled from a string",
+  severity: "critical",
+  owasp2025: "A05",
+  cwe: ["CWE-94", "CWE-1336"],
+  languages: ["js", "jsx", "ts", "tsx", "vue"],
+  prefilter: /compile|createSSRApp|createApp|template\s*:/,
+  nodeTypes: ["CallExpression", "OptionalCallExpression", "ObjectProperty", "Property"],
+  match(node, ctx) {
+    if (node.type === "ObjectProperty" || node.type === "Property") {
+      const key = node.key?.name ?? node.key?.value;
+      if (key !== "template") return null;
+      if (!ctx.isTainted(node.value)) return null;
+      if (!/vue|createApp|createSSRApp/i.test(ctx.source)) return null;
+      return { node: node.value, source: ctx.describe(node.value), kind: "a template option" };
+    }
+    const full = memberName(node.callee);
+    if (!full) return null;
+    if (!COMPILE_CALLS.includes(lastSegment(full))) return null;
+    const first = node.arguments[0];
+    if (!first || !ctx.isTainted(first)) return null;
+    return { node: first, source: ctx.describe(first), kind: lastSegment(full) };
+  },
+  message: (f) => `${f.kind} is given ${f.source}. The Vue template compiler builds a render function, so a string from outside becomes code that runs on your server.`,
+  fix: "Keep templates in components. Pass user data in as props or slot content, never as template source."
+};
+var VITE_HOST = {
+  id: "VITE-HOST",
+  title: "Development server exposed to the network",
+  severity: "high",
+  owasp2025: "A02",
+  cwe: ["CWE-200", "CWE-668"],
+  languages: ["js", "ts", "mjs", "cjs", "vue"],
+  prefilter: /host\s*:|devServer|server\s*:/,
+  nodeTypes: ["ObjectProperty", "Property"],
+  match(node, ctx) {
+    const key = node.key?.name ?? node.key?.value;
+    if (key !== "host") return null;
+    const value = node.value;
+    const literal = staticString(value);
+    const exposed = isTrue(value) || literal === "0.0.0.0" || literal === "::" || literal === "0.0.0.0/0";
+    if (!exposed) return null;
+    if (!/vite|nuxt|devServer|server\s*:|defineConfig/i.test(ctx.source)) return null;
+    return { node, value: literal ?? "true" };
+  },
+  message: (f) => `The dev server host is set to ${f.value}, which binds it to every interface on the machine. Vite dev servers have served arbitrary files off disk to anyone who could reach them, in CVE-2025-30208 and CVE-2025-31125, and Nuxt leaked source the same way in CVE-2025-24360.`,
+  fix: "server: { host: 'localhost' }  // and use a tunnel when you genuinely need remote access"
+};
+var SENSITIVE_ROUTE_PATH = /(admin|internal|billing|account|settings|dashboard|api\/private)/i;
+var NUXT_ROUTE_RULES = {
+  id: "NUXT-ROUTE-RULES",
+  title: "Route rules used as an authorization boundary",
+  severity: "medium",
+  owasp2025: "A01",
+  cwe: ["CWE-862"],
+  languages: ["js", "ts", "mjs", "cjs"],
+  prefilter: /routeRules/,
+  nodeTypes: ["ObjectProperty", "Property"],
+  match(node, ctx) {
+    const key = node.key?.name ?? node.key?.value;
+    if (key !== "routeRules") return null;
+    if (node.value?.type !== "ObjectExpression") return null;
+    for (const property of node.value.properties) {
+      if (property.type === "SpreadElement") continue;
+      const route = property.key?.value ?? property.key?.name;
+      if (typeof route !== "string") continue;
+      if (!SENSITIVE_ROUTE_PATH.test(route)) continue;
+      return { node: property, route };
+    }
+    return null;
+  },
+  message: (f) => `${f.route} is configured through routeRules. Route rules control rendering and caching, not who is allowed in, and a cached page can be served to the next visitor. Check the handler does its own auth.`,
+  fix: "Do the auth check inside the server route or a server middleware, and keep authenticated pages out of the cache."
+};
+var vue_default = [XSS_03, VUE_URL, VUE_SSR, VITE_HOST, NUXT_ROUTE_RULES];
+
 // src/rules/index.js
 var PACKS = {
   "node-core": [...injection_default, ...ssrf_default, ...deserialization_default, ...secrets_config_default, ...prototype_pollution_default],
   "node-auth": [...auth_default, ...access_default],
   "node-dos": [...limits_default],
-  react: [...xss_default, ...next_default]
+  react: [...xss_default, ...next_default],
+  vue: [...vue_default]
 };
 var RULES = Object.values(PACKS).flat();
 var RULES_BY_ID = new Map(RULES.map((rule) => [rule.id, rule]));

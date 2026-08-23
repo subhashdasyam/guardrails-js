@@ -2,6 +2,7 @@
 
 import { walk } from './walk.js';
 import { parseSource } from './parse.js';
+import { scanTemplate } from './vue-template.js';
 import { collectTaintedNames, isTaintedExpr, describeSource, hasGuard } from './taint.js';
 import { changedRangeFromToolInput, reportWindow, inWindow, lineOf, lineText } from './scope.js';
 import { collectSuppressions } from './suppress.js';
@@ -49,16 +50,37 @@ export function analyze(options) {
   const candidates = prefilter(source, enabled);
   if (candidates.length === 0) return { findings: [] };
 
+  const isVue = /\.vue$/i.test(String(filePath));
   const parsed = parseSource(source, filePath);
-  if (parsed.error) return { findings: [], parseError: parsed.error };
 
-  const { ast, language } = parsed;
+  // A single file component with only a template and no script is normal, and
+  // the template rules still have work to do.
+  if (parsed.error && !isVue) return { findings: [], parseError: parsed.error };
 
-  const active = candidates.filter((rule) => languageMatches(rule, language));
-  if (active.length === 0) return { findings: [] };
+  const ast = parsed.ast ?? {
+    type: 'Program',
+    body: [],
+    directives: [],
+    comments: [],
+    start: 0,
+    end: source.length,
+  };
+  const language = parsed.language ?? 'js';
+
+  const templateRules = isVue ? candidates.filter((rule) => rule.target === 'template') : [];
+
+  // Template rules declare `vue` as their language, but the parsed language of
+  // a single file component is the language of its script block, so they are
+  // selected by file extension instead.
+  const active = candidates.filter(
+    (rule) => rule.target !== 'template' && languageMatches(rule, language),
+  );
+
+  if (active.length === 0 && templateRules.length === 0) return { findings: [] };
 
   const byNodeType = new Map();
   for (const rule of active) {
+    if (rule.target === 'template') continue;
     for (const type of rule.nodeTypes ?? ['CallExpression']) {
       if (!byNodeType.has(type)) byNodeType.set(type, []);
       byNodeType.get(type).push(rule);
@@ -153,6 +175,58 @@ export function analyze(options) {
 
     return undefined;
   });
+
+  // Vue templates are scanned separately. The script block has an AST, the
+  // template does not, so these rules work on elements and attributes.
+  if (templateRules.length > 0) {
+    const elements = scanTemplate(source);
+
+    for (const element of elements) {
+      for (const rule of templateRules) {
+        let hit;
+        try {
+          hit = rule.matchTemplate(element, ctx);
+        } catch {
+          continue;
+        }
+        if (!hit) continue;
+
+        const offset = hit.offset ?? element.start;
+
+        // Scope to the edit when we know where it was. A template finding has
+        // no enclosing function to widen to, so the raw range is what we use.
+        if (!wholeFile && changed && (offset < changed.start || offset > changed.end)) continue;
+
+        const line = lineOf(source, offset);
+        const key = `${rule.id}:${line}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        if (suppressions.isSuppressed(rule.id, line)) continue;
+
+        const severity = config.severityFor({
+          ...rule,
+          severity: hit.severityHint ?? rule.severity,
+        });
+        if (!meetsMinSeverity(severity, config.minSeverity)) continue;
+
+        findings.push({
+          ruleId: rule.id,
+          title: rule.title,
+          severity,
+          owasp2025: rule.owasp2025,
+          cwe: rule.cwe ?? [],
+          api: rule.api ?? null,
+          line,
+          column: 1,
+          evidence: lineText(source, line),
+          message: typeof rule.message === 'function' ? rule.message(hit) : rule.message,
+          fix: rule.fix,
+          filePath,
+        });
+      }
+    }
+  }
 
   // An ignore comment with no reason is itself worth one quiet line.
   for (const missing of suppressions.missingReason) {
