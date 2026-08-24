@@ -135,6 +135,134 @@ Needs Node 20.10 or later. Tested on 20, 22, 24, and 26.
 
 Run `/hooks` to confirm. Three entries should appear under Plugin Hooks.
 
+### 🔄 Keep it updated
+
+To fetch the newest release immediately, run these commands in your terminal:
+
+```bash
+claude plugin marketplace update guardrails-js
+claude plugin update guardrails-js@guardrails-js
+```
+
+Restart Claude Code to load the update.
+
+Automatic updates are controlled per marketplace. Third-party marketplaces start with automatic updates off. To turn them on:
+
+1. Run `/plugin`.
+2. Open **Marketplaces**.
+3. Select `guardrails-js`.
+4. Choose **Enable auto-update**.
+
+Claude checks for marketplace updates after startup. When it reports a new version, run `/reload-plugins` or start a new session. See the [Claude Code plugin guide](https://code.claude.com/docs/en/discover-plugins) for the full update behaviour.
+
+### ♻️ Uninstall or reinstall
+
+A normal reinstall keeps the marketplace and replaces the installed plugin:
+
+```bash
+claude plugin uninstall guardrails-js@guardrails-js
+claude plugin install guardrails-js@guardrails-js
+```
+
+These commands use user scope by default. If you installed it for one project, add `--scope project` to both commands. For a private install in one project, use `--scope local`.
+
+Uninstalling the last installed scope removes the plugin's persistent data. Add `--keep-data` to the uninstall command if you want to preserve it. Your project-level `.guardrails-js.json` file is not part of that plugin data and is left alone.
+
+If the marketplace itself is stuck, remove and add it again:
+
+```bash
+claude plugin marketplace remove guardrails-js
+claude plugin marketplace add subhashdasyam/guardrails-js
+claude plugin install guardrails-js@guardrails-js
+```
+
+Removing a marketplace also removes plugins installed from it. Restart Claude Code after reinstalling.
+
+## 🧰 Installation troubleshooting
+
+The hooks run `node` by name, so Node must be visible on the `PATH` inherited by Claude Code. Start with this in the same terminal where you launch `claude`:
+
+```bash
+node --version
+```
+
+It must print `v20.10.0` or later. An active LTS release from the [Node.js download page](https://nodejs.org/en/download) is the safest choice. After changing Node or `PATH`, close Claude Code, open a new terminal, check the version again, and then start Claude Code from that terminal.
+
+### 🍎 macOS
+
+**Homebrew.** Install the normal formula unless you deliberately need one pinned major:
+
+```bash
+brew install node
+node --version
+```
+
+If Homebrew is installed but `brew` or `node` is missing in a new terminal, load Homebrew's environment. Use the line for your Mac:
+
+```bash
+# Apple Silicon
+eval "$(/opt/homebrew/bin/brew shellenv)"
+
+# Intel
+eval "$(/usr/local/bin/brew shellenv)"
+```
+
+Put the matching line in `~/.zprofile`, or follow the exact shell setup printed by the Homebrew installer. An interactive zsh can also load it from `~/.zshrc`, but only keep one copy. Homebrew documents its supported prefixes and shell setup in its [installation guide](https://docs.brew.sh/Installation).
+
+Versioned formulas such as `node@24` are keg-only and need their own `opt/node@24/bin` directory on `PATH`. `brew install node` avoids that extra step.
+
+**Node website.** Download and run the current LTS macOS `.pkg`, then open a new terminal and run `node --version`. This installation does not use `nvm`, so it does not need an `nvm.sh` line.
+
+**nvm.** Only use the following setup if you installed Node through [nvm](https://github.com/nvm-sh/nvm):
+
+```bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+nvm install --lts
+node --version
+```
+
+Put the first two lines in `~/.zshrc` when zsh is your shell.
+
+### 🐧 Linux
+
+For `nvm`, put its loader in the startup file for the shell that launches Claude Code. That is normally `~/.bashrc` for bash or `~/.zshrc` for zsh:
+
+```bash
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+nvm install --lts
+node --version
+command -v node
+```
+
+If you downloaded an official Linux archive instead, add the archive's extracted `bin` directory to `PATH`. Do not source `~/.nvm/nvm.sh` unless you actually installed `nvm`. If you use your distribution's Node package, check the version because older distributions may ship a release below 20.10.
+
+WSL follows these Linux instructions.
+
+### 🪟 Windows
+
+Download and run the current LTS Windows `.msi` from the Node.js website. Close every PowerShell, Command Prompt, and Claude Code window after installation, then open a new PowerShell and check:
+
+```powershell
+node --version
+Get-Command node
+```
+
+If Node is still missing, rerun the installer and confirm that Node is added to `PATH`. A standard installation normally exposes `node.exe` from `C:\Program Files\nodejs`.
+
+[nvm-windows](https://github.com/coreybutler/nvm-windows) is a separate Windows project. It does not use `~/.nvm/nvm.sh`, `.zshrc`, or `.bashrc`.
+
+### 🩺 Final checks
+
+List the installed version from your terminal:
+
+```bash
+claude plugin list
+```
+
+Then run `/hooks` inside Claude Code. You should see SessionStart, PostToolUse, and PreToolUse entries for `guardrails-js`. If they are missing or show an error, open `/plugin`, select **Errors**, and check whether Claude Code can find `node`.
+
 ---
 
 ## 🧭 Two commands
