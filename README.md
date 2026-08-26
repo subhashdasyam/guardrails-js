@@ -172,12 +172,25 @@ The one thing it does need is `node` on the PATH Claude Code inherited. If it is
 
 **The usual cause is nvm on macOS or Linux.** nvm is a shell function sourced from `~/.nvm/nvm.sh` by your `.bashrc` or `.zshrc`. A non-interactive shell never reads those. So Claude Code started from a terminal has node, and Claude Code started from the Dock or a desktop launcher does not.
 
+`/guardrails-js:doctor` handles this for you. It finds the node you already have, shows you the one command that fixes it, and verifies the result. You do not have to source anything.
+
+Worth knowing, because it is the part everyone gets wrong: **`nvm.sh` is not what makes node work.** That script only defines the `nvm` shell function and rewrites `PATH`. The binary itself needs none of it and runs from its own path with a completely empty environment. So the fix is never to source a script, it is to make one path reachable:
+
+```bash
+# what doctor works out for you, then runs with your approval
+sudo ln -sf "$HOME/.nvm/versions/node/v24.12.0/bin/node" /usr/local/bin/node
+```
+
+`/usr/local/bin` is on the default PATH on macOS and Linux, including for apps launched from the Dock, which is the case that breaks. This fixes node for every tool on the machine, not only this plugin. Restart Claude Code afterwards, since a running process keeps the PATH it started with.
+
 | | Fix |
 |---|---|
-| nvm | Start Claude Code from a terminal, or move to `fnm`, `volta`, or `asdf`, which install real shims instead of a shell function |
+| nvm | Run `/guardrails-js:doctor`. Or start Claude Code from a terminal, or move to `fnm`, `volta`, or `asdf`, which install real shims instead of a shell function |
 | Homebrew | Node lives at `/opt/homebrew/bin/node` on Apple silicon, `/usr/local/bin/node` on Intel. `brew link node` if it is not on PATH |
-| Windows | The official installer puts node on PATH. Check with `where node` in a new terminal. Restart Claude Code after any PATH change, since a running process does not see it |
-| Anything else | Copy the three entries from `<plugin>/hooks/hooks.json` into your own `.claude/settings.json`, replace `node` with an absolute path, and disable the plugin's hooks so they do not run twice |
+| Windows | The official installer puts node on PATH. Check with `where node` in a new terminal. Restart Claude Code after any PATH change, since a running process does not see it. nvm for Windows is a different program and keeps node on PATH already |
+
+> [!WARNING]
+> Do not set `PATH` in `settings.json` under `env`. It looks like the obvious fix and it is not. Claude Code writes those values in **replacing** what your shell provided, and it does not expand `${PATH}`, so your session and everything it spawns would be left with only the literal string you wrote.
 
 ### ♻️ Uninstall or reinstall
 

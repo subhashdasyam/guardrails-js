@@ -1,47 +1,69 @@
 ---
 name: doctor
-description: Check that guardrails-js can actually run, and say how to fix it if not.
+description: Check that guardrails-js can actually run, and fix it if not.
 tools: Bash, Read
 ---
 
-Work out whether the plugin's hooks can run on this machine, then report.
+Work out whether the plugin's hooks can run on this machine. If they cannot, fix it.
 
 The hooks are Node scripts. Claude Code spawns `node` directly with the script path as its argument, with no shell in between, so nothing here depends on PowerShell being allowed or on Git Bash being installed. What it does depend on is `node` resolving on the PATH Claude Code inherited. If it does not, every hook fails to start and the plugin silently does nothing, which is exactly the symptom that brings people here.
 
-Run these and read the results:
+## Step 1: diagnose
 
 ```bash
-node --version
-command -v node || where node
-echo "$PATH"
-ls "${CLAUDE_PLUGIN_ROOT}/dist" 2>/dev/null || echo "plugin dist not found"
-node "${CLAUDE_PLUGIN_ROOT}/dist/audit.mjs" --help >/dev/null 2>&1 && echo "hook scripts run" || echo "hook scripts do not run"
+node --version 2>&1 || echo "NODE NOT FOUND"
+command -v node 2>/dev/null || where node 2>/dev/null || echo "not on PATH"
+node "${CLAUDE_PLUGIN_ROOT}/dist/audit.mjs" --help >/dev/null 2>&1 && echo "hooks can run" || echo "hooks cannot run"
 ```
 
-Then report in this shape:
+If `node --version` printed a version and the hooks can run, say so with the version and path, and stop. Nothing is wrong.
 
-- One line: working, or not working and why.
-- If `node --version` failed, that is the whole problem. Give the fix for their operating system from the list below and stop.
-- If node works and the dist listing worked, say the plugin is fine and print the node version and path.
+If node was not found, continue.
 
-## Fixes when node is not found
+## Step 2: find the node that is already installed
 
-**macOS or Linux with nvm.** This is the usual cause. nvm is a shell function sourced from `~/.nvm/nvm.sh` by `.bashrc` or `.zshrc`. A non-interactive shell does not read those, so a Claude Code launched from the Dock or a desktop launcher has no node on PATH, while one launched from a terminal does.
-
-Pick one:
-
-1. Start Claude Code from a terminal where `node --version` already works. Simplest, fixes it immediately.
-2. Move to a version manager that installs real shims rather than a shell function, so node resolves everywhere: `fnm`, `volta`, or `asdf`.
-3. Symlink the node you use into a directory that is always on PATH:
+Almost always there is a working node, just not on the PATH this process inherited. Find it:
 
 ```bash
-sudo ln -sf "$(which node)" /usr/local/bin/node
+NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+V=$(ls -1 "$NVM_DIR/versions/node" 2>/dev/null | sort -V | tail -1)
+[ -n "$V" ] && echo "nvm: $NVM_DIR/versions/node/$V/bin/node"
+for p in /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node "$HOME/.local/share/fnm/aliases/default/bin/node" "$HOME/.volta/bin/node"; do
+  [ -x "$p" ] && echo "found: $p"
+done
 ```
 
-**macOS with Homebrew.** Node is at `/opt/homebrew/bin/node` on Apple silicon and `/usr/local/bin/node` on Intel. Both are normally on PATH. If not, `brew link node`.
+Run whichever path it prints with `--version` to confirm it works before using it.
 
-**Windows.** The official installer adds node to PATH. Check with `where node` in a new terminal. If it is missing, reinstall from nodejs.org and tick the PATH option, or use `fnm` or `volta`. Restart Claude Code afterwards, since PATH changes do not reach a running process.
+**You do not need to source `nvm.sh`.** That script exists to define the `nvm` shell function and to rewrite PATH. The node binary needs none of it and runs from its own path with an empty environment. Sourcing it would not help here anyway, because there is no shell in the middle to source it into.
 
-**Any platform, as a last resort.** Point the hooks at an absolute node path yourself. Copy the three entries from `<plugin>/hooks/hooks.json` into your own `.claude/settings.json` and replace `node` with the full path, for example `/Users/you/.nvm/versions/node/v22.14.0/bin/node`. Then disable the plugin's own hooks so they do not run twice.
+## Step 3: apply the fix
 
-Do not offer to edit any of these files. Report what you found and what the user should do.
+Show the user the command first and let them approve it. `/usr/local/bin` is on the default PATH on both macOS and Linux, including for apps launched from the Dock or a desktop launcher, which is the case that breaks:
+
+```bash
+sudo ln -sf "<the node path from step 2>" /usr/local/bin/node
+```
+
+Then verify, and tell them to restart Claude Code, since a running process keeps the PATH it started with:
+
+```bash
+/usr/local/bin/node --version
+```
+
+This fixes node for every tool on the machine, not only this plugin.
+
+If they would rather not use `sudo`, the alternatives, in the order worth trying:
+
+1. Start Claude Code from a terminal where `node --version` already works. Nothing to install, fixes it immediately, but only for sessions started that way.
+2. Switch to a version manager that installs a real shim instead of a shell function, so node resolves everywhere: `fnm`, `volta`, or `asdf`.
+
+## Windows
+
+`where node` should print a path. If it does not, reinstall from nodejs.org with the PATH option ticked, or use `fnm` or `volta`. Restart Claude Code afterwards, since PATH changes do not reach a running process. nvm for Windows is a different program from the Unix one and keeps node on PATH through a symlink, so the nvm case above does not apply.
+
+## Do not
+
+Do not set `PATH` in `settings.json` under `env`. Claude Code writes those values in **replacing** what the shell provided, and it does not expand `${PATH}`, so the session and everything it spawns would be left with only the literal string you wrote.
+
+Report what you found and what you changed.
