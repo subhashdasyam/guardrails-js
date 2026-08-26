@@ -42,16 +42,20 @@ test('the manifest does not declare an auto discovered hooks file', () => {
   }
 });
 
-test('every hook command is portable and self reporting', () => {
-  // The command string is handed to sh on macOS and Linux and to PowerShell on
-  // Windows, so it has to be valid in both. `node "path"` is; anything with
-  // shell operators is not.
+test('every hook spawns node directly, with no shell', () => {
+  // Exec form: command is the executable, args is the argument vector, and no
+  // shell runs at all.
   //
-  // It also has to be the shell form. The exec form shipped once, as
-  // command "exec" with args, which asks for a program named exec. There is no
-  // such program, so spawn failed with ENOENT before any shell ran and the user
-  // saw nothing at all. Through a shell a missing node prints
-  // "node: not found" and exits 127, which Claude Code surfaces.
+  // The shell form needs a shell, and on Windows that means PowerShell, which
+  // plenty of enterprises block by policy. Requiring it would mean the plugin
+  // simply never runs on those machines. Spawning node directly needs no shell
+  // on any operating system, and no quoting either, so a plugin path with a
+  // space in it cannot break it.
+  //
+  // The exec form shipped broken once, as command "exec" with args ["node", …],
+  // which asks for a program called exec. There is no such program, so every
+  // hook failed with ENOENT. That is the specific mistake the assertions below
+  // are shaped to catch.
   const config = JSON.parse(fs.readFileSync(path.join(root, 'hooks', 'hooks.json'), 'utf8'));
 
   for (const [event, entries] of Object.entries(config.hooks)) {
@@ -60,27 +64,30 @@ test('every hook command is portable and self reporting', () => {
         assert.equal(hook.type, 'command', `${event} hook is not a command hook`);
 
         assert.equal(
-          hook.args,
-          undefined,
-          `${event} declares args, which switches on the exec form. The command is then ` +
-            'spawned directly with no shell, so a missing node fails silently.',
-        );
-
-        assert.match(
           hook.command,
-          /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/dist\/[a-z-]+\.mjs"$/,
-          `${event} command is ${JSON.stringify(hook.command)}. It must be exactly ` +
-            'node "${CLAUDE_PLUGIN_ROOT}/dist/<name>.mjs", which is the only shape valid in ' +
-            'both sh and PowerShell.',
+          'node',
+          `${event} runs "${hook.command}". The executable is node. Anything else is either ` +
+            'a shell, which Windows policy may forbid, or a program that does not exist.',
         );
 
-        for (const operator of ['&&', '||', ';', '|', '$(', '`']) {
+        assert.ok(Array.isArray(hook.args), `${event} has no args, so no script would run`);
+        assert.equal(hook.args.length, 1, `${event} should pass exactly the script path`);
+        assert.match(
+          hook.args[0],
+          /^\$\{CLAUDE_PLUGIN_ROOT\}\/dist\/[a-z-]+\.mjs$/,
+          `${event} arg is ${JSON.stringify(hook.args[0])}`,
+        );
+
+        // No shell runs, so anything shell shaped is a sign someone reached for
+        // one and it will be passed to node as a literal filename.
+        for (const operator of ['&&', '||', ';', '|', '$(', '`', '"']) {
           assert.ok(
-            !hook.command.includes(operator),
-            `${event} command contains ${operator}, which does not mean the same thing in ` +
-              'PowerShell as it does in sh',
+            !hook.args[0].includes(operator),
+            `${event} arg contains ${operator}, but there is no shell to interpret it`,
           );
         }
+
+        assert.equal(hook.shell, undefined, `${event} names a shell, but exec form uses none`);
       }
     }
   }

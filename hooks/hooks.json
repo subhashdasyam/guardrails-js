@@ -5,9 +5,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/session-start.mjs\"",
+            "command": "node",
             "timeout": 10,
-            "statusMessage": "guardrails-js reading your stack"
+            "statusMessage": "guardrails-js reading your stack",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/dist/session-start.mjs"
+            ]
           }
         ]
       }
@@ -18,11 +21,14 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/post-write.mjs\"",
+            "command": "node",
             "async": true,
             "asyncRewake": true,
             "timeout": 20,
-            "statusMessage": "guardrails-js scanning"
+            "statusMessage": "guardrails-js scanning",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/dist/post-write.mjs"
+            ]
           }
         ]
       }
@@ -33,8 +39,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/pre-bash.mjs\"",
-            "timeout": 10
+            "command": "node",
+            "timeout": 10,
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/dist/pre-bash.mjs"
+            ]
           }
         ]
       }

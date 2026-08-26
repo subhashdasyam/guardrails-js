@@ -160,7 +160,15 @@ Claude checks for marketplace updates after startup. When it reports a new versi
 
 Run `/guardrails-js:doctor`. It checks whether the hooks can actually run and tells you what to do.
 
-The hooks are Node scripts, launched as `node "<plugin>/dist/<hook>.mjs"`. That one command line is valid in both `sh` and PowerShell, which is why it is written that way rather than with any shell operators. If `node` is not on the PATH Claude Code inherited, every hook exits 127 and the plugin does nothing.
+The hooks are Node scripts. Claude Code spawns `node` directly with the script path as its argument:
+
+```json
+{ "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/pre-bash.mjs"] }
+```
+
+**No shell is involved.** Not `sh`, not PowerShell, not Git Bash. That is deliberate: PowerShell is blocked by policy in plenty of enterprises, and a hook that needs it simply never runs there. It also means no quoting, so a plugin path with a space in it cannot break anything.
+
+The one thing it does need is `node` on the PATH Claude Code inherited. If it is not there, the hooks fail to start and the plugin quietly does nothing.
 
 **The usual cause is nvm on macOS or Linux.** nvm is a shell function sourced from `~/.nvm/nvm.sh` by your `.bashrc` or `.zshrc`. A non-interactive shell never reads those. So Claude Code started from a terminal has node, and Claude Code started from the Dock or a desktop launcher does not.
 

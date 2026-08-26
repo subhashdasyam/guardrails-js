@@ -6,7 +6,7 @@ tools: Bash, Read
 
 Work out whether the plugin's hooks can run on this machine, then report.
 
-The hooks are Node scripts launched by the shell as `node "<plugin>/dist/<hook>.mjs"`. If `node` is not on the PATH that Claude Code inherited, every hook fails with exit 127 and the plugin does nothing.
+The hooks are Node scripts. Claude Code spawns `node` directly with the script path as its argument, with no shell in between, so nothing here depends on PowerShell being allowed or on Git Bash being installed. What it does depend on is `node` resolving on the PATH Claude Code inherited. If it does not, every hook fails to start and the plugin silently does nothing, which is exactly the symptom that brings people here.
 
 Run these and read the results:
 
