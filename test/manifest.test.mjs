@@ -42,6 +42,50 @@ test('the manifest does not declare an auto discovered hooks file', () => {
   }
 });
 
+test('every hook command is portable and self reporting', () => {
+  // The command string is handed to sh on macOS and Linux and to PowerShell on
+  // Windows, so it has to be valid in both. `node "path"` is; anything with
+  // shell operators is not.
+  //
+  // It also has to be the shell form. The exec form shipped once, as
+  // command "exec" with args, which asks for a program named exec. There is no
+  // such program, so spawn failed with ENOENT before any shell ran and the user
+  // saw nothing at all. Through a shell a missing node prints
+  // "node: not found" and exits 127, which Claude Code surfaces.
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'hooks', 'hooks.json'), 'utf8'));
+
+  for (const [event, entries] of Object.entries(config.hooks)) {
+    for (const entry of entries) {
+      for (const hook of entry.hooks) {
+        assert.equal(hook.type, 'command', `${event} hook is not a command hook`);
+
+        assert.equal(
+          hook.args,
+          undefined,
+          `${event} declares args, which switches on the exec form. The command is then ` +
+            'spawned directly with no shell, so a missing node fails silently.',
+        );
+
+        assert.match(
+          hook.command,
+          /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/dist\/[a-z-]+\.mjs"$/,
+          `${event} command is ${JSON.stringify(hook.command)}. It must be exactly ` +
+            'node "${CLAUDE_PLUGIN_ROOT}/dist/<name>.mjs", which is the only shape valid in ' +
+            'both sh and PowerShell.',
+        );
+
+        for (const operator of ['&&', '||', ';', '|', '$(', '`']) {
+          assert.ok(
+            !hook.command.includes(operator),
+            `${event} command contains ${operator}, which does not mean the same thing in ` +
+              'PowerShell as it does in sh',
+          );
+        }
+      }
+    }
+  }
+});
+
 test('hooks/hooks.json exists, so auto discovery has something to find', () => {
   assert.ok(fs.existsSync(path.join(root, 'hooks', 'hooks.json')));
 });

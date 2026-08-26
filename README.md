@@ -155,6 +155,22 @@ Automatic updates are controlled per marketplace. Third-party marketplaces start
 
 Claude checks for marketplace updates after startup. When it reports a new version, run `/reload-plugins` or start a new session. See the [Claude Code plugin guide](https://code.claude.com/docs/en/discover-plugins) for the full update behaviour.
 
+
+### 🩺 If nothing seems to happen
+
+Run `/guardrails-js:doctor`. It checks whether the hooks can actually run and tells you what to do.
+
+The hooks are Node scripts, launched as `node "<plugin>/dist/<hook>.mjs"`. That one command line is valid in both `sh` and PowerShell, which is why it is written that way rather than with any shell operators. If `node` is not on the PATH Claude Code inherited, every hook exits 127 and the plugin does nothing.
+
+**The usual cause is nvm on macOS or Linux.** nvm is a shell function sourced from `~/.nvm/nvm.sh` by your `.bashrc` or `.zshrc`. A non-interactive shell never reads those. So Claude Code started from a terminal has node, and Claude Code started from the Dock or a desktop launcher does not.
+
+| | Fix |
+|---|---|
+| nvm | Start Claude Code from a terminal, or move to `fnm`, `volta`, or `asdf`, which install real shims instead of a shell function |
+| Homebrew | Node lives at `/opt/homebrew/bin/node` on Apple silicon, `/usr/local/bin/node` on Intel. `brew link node` if it is not on PATH |
+| Windows | The official installer puts node on PATH. Check with `where node` in a new terminal. Restart Claude Code after any PATH change, since a running process does not see it |
+| Anything else | Copy the three entries from `<plugin>/hooks/hooks.json` into your own `.claude/settings.json`, replace `node` with an absolute path, and disable the plugin's hooks so they do not run twice |
+
 ### ♻️ Uninstall or reinstall
 
 A normal reinstall keeps the marketplace and replaces the installed plugin:
@@ -265,12 +281,13 @@ Then run `/hooks` inside Claude Code. You should see SessionStart, PostToolUse, 
 
 ---
 
-## 🧭 Two commands
+## 🧭 Three commands
 
 | Command | What it does |
 |---|---|
 | `/guardrails-js:audit [path]` | Scan the whole repository, not just what Claude touched |
 | `/guardrails-js:report` | Summarise what has been flagged this session |
+| `/guardrails-js:doctor` | Check the hooks can actually run, and say how to fix it if not |
 
 And a CLI, for CI:
 
