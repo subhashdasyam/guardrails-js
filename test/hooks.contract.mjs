@@ -45,35 +45,7 @@ fs.writeFileSync(
 let passed = 0;
 let failed = 0;
 
-function run(hook, input) {
-  const result = spawnSync(process.execPath, [path.join(dist, hook)], {
-    input: JSON.stringify(input),
-    encoding: 'utf8',
-  });
-  return { code: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
-}
 
-function check(name, fn) {
-  try {
-    fn();
-    passed += 1;
-    console.log(`ok    ${name}`);
-  } catch (err) {
-    failed += 1;
-    console.log(`FAIL  ${name}`);
-    console.log(`      ${err.message.split('\n')[0]}`);
-  }
-}
-
-function write(file) {
-  return {
-    session_id: 'contract',
-    cwd: project,
-    hook_event_name: 'PostToolUse',
-    tool_name: 'Write',
-    tool_input: { file_path: path.join(project, file) },
-  };
-}
 
 check('post-write says nothing about a clean file', () => {
   const out = run('post-write.mjs', write('clean.js'));
@@ -260,6 +232,79 @@ check('--fail-on perf is rejected rather than quietly breaking builds', () => {
   assert.equal(out.code, 2);
   assert.match(out.stderr, /never fail a build/);
 });
+
+// Run a hook the way the harness does: read hooks.json, expand the plugin root,
+// and execute the command line it declares. Spawning the bundle directly, which
+// is what the rest of this file does, proved the code worked while every hook
+// was failing to launch at all. 1.4.0 declared command "exec" with args, which
+// asks for a program named exec. There isn't one, it is a shell builtin, so
+// spawn returned ENOENT and all three hooks silently did nothing.
+function runViaManifest(event, input) {
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'hooks', 'hooks.json'), 'utf8'));
+  const entry = config.hooks[event]?.[0]?.hooks?.[0];
+  if (!entry) throw new Error(`hooks.json declares no ${event} hook`);
+
+  const expand = (s) => s.replaceAll('${CLAUDE_PLUGIN_ROOT}', root);
+
+  const result = entry.args
+    ? spawnSync(expand(entry.command), entry.args.map(expand), {
+        input: JSON.stringify(input),
+        encoding: 'utf8',
+      })
+    : spawnSync(expand(entry.command), {
+        input: JSON.stringify(input),
+        encoding: 'utf8',
+        shell: true,
+      });
+
+  if (result.error) throw new Error(`${event} hook could not launch: ${result.error.code}`);
+  return { code: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+}
+
+for (const [event, input] of [
+  ['SessionStart', { session_id: 'c', cwd: project, hook_event_name: 'SessionStart', source: 'startup' }],
+  ['PostToolUse', write('critical.js')],
+  ['PreToolUse', bash('npm install expres')],
+]) {
+  check(`the ${event} command in hooks.json actually launches`, () => {
+    const out = runViaManifest(event, input);
+    assert.notEqual(out.code, 127, 'exit 127 means the command was not found');
+    assert.ok(
+      out.stdout.trim() || out.stderr.trim() || out.code === 2,
+      `${event} produced nothing at all, so it probably never ran`,
+    );
+  });
+}
+
+function run(hook, input) {
+  const result = spawnSync(process.execPath, [path.join(dist, hook)], {
+    input: JSON.stringify(input),
+    encoding: 'utf8',
+  });
+  return { code: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+}
+
+function check(name, fn) {
+  try {
+    fn();
+    passed += 1;
+    console.log(`ok    ${name}`);
+  } catch (err) {
+    failed += 1;
+    console.log(`FAIL  ${name}`);
+    console.log(`      ${err.message.split('\n')[0]}`);
+  }
+}
+
+function write(file) {
+  return {
+    session_id: 'contract',
+    cwd: project,
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Write',
+    tool_input: { file_path: path.join(project, file) },
+  };
+}
 
 fs.rmSync(perfOnly, { recursive: true, force: true });
 fs.rmSync(project, { recursive: true, force: true });
