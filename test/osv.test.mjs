@@ -200,9 +200,15 @@ test('advisoryNotes says what to upgrade to', async () => {
   const notes = await advisoryNotes([{ name: 'lodash', version: '4.17.11' }], 1000);
 
   assert.equal(notes.length, 1);
-  assert.match(notes[0], /lodash@4\.17\.11/);
-  assert.match(notes[0], /CRITICAL GHSA-jf85-cpcp-j695/);
-  assert.match(notes[0], /Upgrade to 4\.17\.12 or later/);
+  assert.match(notes[0].text, /lodash@4\.17\.11/);
+  assert.match(notes[0].text, /CRITICAL GHSA-jf85-cpcp-j695/);
+  assert.match(notes[0].text, /Upgrade to 4\.17\.12 or later/);
+
+  // The severity and the identity ride along so the hook can decide whether to
+  // block, and whether allowPackages lets this one past.
+  assert.equal(notes[0].severity, 'CRITICAL');
+  assert.equal(notes[0].name, 'lodash');
+  assert.equal(notes[0].version, '4.17.11');
 });
 
 test('advisoryNotes stays silent when no fix is reachable', async () => {

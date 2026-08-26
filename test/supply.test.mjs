@@ -13,6 +13,8 @@ import path from 'node:path';
 import { runManifestRules, isManifestFile } from '../src/engine/manifest.js';
 import { loadConfig } from '../src/engine/config.js';
 import { RULES } from '../src/rules/index.js';
+import { allows, evaluateInstall } from '../src/supply-chain/signals.js';
+import { BLOCKING_SEVERITIES } from '../src/supply-chain/osv.js';
 
 // The shipped floor is medium. A test harness has to see everything, or a low
 // severity rule could never prove that it fires.
@@ -217,4 +219,71 @@ test('the files that trigger a recheck', () => {
   assert.ok(isManifestFile('/a/pnpm-lock.yaml'));
   assert.ok(!isManifestFile('/a/index.js'));
   assert.ok(!isManifestFile('/a/package.json.bak'));
+});
+
+// Blocking versus prompting.
+//
+// The npm gate returned permissionDecision "ask" for everything, and an "ask"
+// from a hook is not a gate. Claude Code evaluates it alongside the permission
+// rules, so an allow rule as ordinary as Bash(npm:*) swallowed it and the
+// install ran with nobody told. Verified by installing lodash@4.17.17, which
+// carries six advisories: no prompt, no message, package added.
+//
+// Exit 2 is documented to stop the call before permission rules are read, so
+// the cases that must not slip through use that instead. These tests hold the
+// line on which cases those are, and on the way back out.
+
+test('a compromised release blocks rather than prompting', () => {
+  const install = { subcommand: 'install', packages: ['chalk@5.6.1'], flags: [] };
+  const verdict = evaluateInstall(install, { projectRoot: '/nope', known: new Set() });
+
+  assert.equal(verdict.block, true, 'known malware has to survive an allow rule');
+  assert.ok(verdict.reasons.some((reason) => /compromised/.test(reason)));
+});
+
+test('a clean package neither blocks nor prompts on the denylist signal', () => {
+  const install = { subcommand: 'install', packages: ['chalk@5.3.0'], flags: [] };
+  const verdict = evaluateInstall(install, { projectRoot: '/nope', known: new Set() });
+
+  assert.equal(verdict.block, false, 'a version that was never compromised is fine');
+});
+
+test('allowPackages is the way past a block, since nothing else is', () => {
+  const install = { subcommand: 'install', packages: ['chalk@5.6.1'], flags: [] };
+
+  const byVersion = evaluateInstall(install, {
+    projectRoot: '/nope',
+    known: new Set(),
+    allowPackages: ['chalk@5.6.1'],
+  });
+  assert.equal(byVersion.block, false, 'an exact pin should be respected');
+
+  const byName = evaluateInstall(install, {
+    projectRoot: '/nope',
+    known: new Set(),
+    allowPackages: ['chalk'],
+  });
+  assert.equal(byName.block, false, 'a bare name covers every version of it');
+
+  // Still worth saying out loud. Allowing it silences the block, not the reason.
+  assert.ok(byName.reasons.some((reason) => /compromised/.test(reason)));
+});
+
+test('allows matches a name or an exact version, and nothing else', () => {
+  assert.ok(allows(['lodash'], 'lodash', '4.17.17'));
+  assert.ok(allows(['lodash@4.17.17'], 'lodash', '4.17.17'));
+  assert.ok(!allows(['lodash@4.17.21'], 'lodash', '4.17.17'), 'a different pin must not match');
+  assert.ok(!allows(['lodash-es'], 'lodash', '4.17.17'), 'no prefix or partial matching');
+  assert.ok(!allows([], 'lodash', '4.17.17'));
+  assert.ok(!allows(undefined, 'lodash', '4.17.17'), 'an absent list is not an allow list');
+});
+
+test('the severities that block are the ones with somewhere to upgrade to', () => {
+  // Only advisories with a reachable fix reach this set, so blocking always
+  // leaves an action available. Widening it to MODERATE would block installs
+  // whose only remedy is to not install.
+  assert.ok(BLOCKING_SEVERITIES.has('CRITICAL'));
+  assert.ok(BLOCKING_SEVERITIES.has('HIGH'));
+  assert.ok(!BLOCKING_SEVERITIES.has('MODERATE'));
+  assert.ok(!BLOCKING_SEVERITIES.has('LOW'));
 });

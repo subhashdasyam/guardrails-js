@@ -14779,6 +14779,10 @@ var SECURITY_SEVERITIES = ["low", "medium", "high", "critical"];
 var DEFAULTS = {
   severityOverrides: {},
   disableRules: [],
+  // Package specifiers that never hard block, as "lodash" or "lodash@4.17.21".
+  // A blocked install has no other way past, so this is the release valve for a
+  // project that genuinely needs a version carrying an advisory.
+  allowPackages: [],
   excludePaths: [
     "**/node_modules/**",
     "**/dist/**",
@@ -14831,6 +14835,7 @@ function loadConfig(cwd = process.cwd()) {
     severityOverrides: { ...DEFAULTS.severityOverrides, ...fromFile.severityOverrides ?? {} },
     excludePaths: fromFile.excludePaths ?? DEFAULTS.excludePaths,
     disableRules: fromFile.disableRules ?? DEFAULTS.disableRules,
+    allowPackages: fromFile.allowPackages ?? DEFAULTS.allowPackages,
     configFile: file,
     projectRoot: file ? path2.dirname(file) : cwd
   };

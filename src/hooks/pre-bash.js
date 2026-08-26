@@ -3,10 +3,25 @@
 // The only place the plugin interrupts you. Once a postinstall script has run,
 // telling Claude it was a bad idea is worth nothing.
 
-import { readHookInput, emitJson, emitAdditionalContext, readPackageJson } from './util.js';
+import {
+  readHookInput,
+  emitJson,
+  emitAdditionalContext,
+  emitLoud,
+  readPackageJson,
+} from './util.js';
 import { loadConfig } from '../engine/config.js';
 import { findInstallCommands, riskyShellPatterns } from '../supply-chain/parse-command.js';
-import { evaluateInstall, knownPackageNames } from '../supply-chain/signals.js';
+import { allows, evaluateInstall, knownPackageNames } from '../supply-chain/signals.js';
+import { BLOCKING_SEVERITIES } from '../supply-chain/osv.js';
+
+/** A named severity with a reachable fix, that the project has not allowed. */
+function blocks(note, config) {
+  return (
+    BLOCKING_SEVERITIES.has(note.severity) &&
+    !allows(config.allowPackages, note.name, note.version)
+  );
+}
 
 function ask(reason) {
   emitJson({
@@ -47,11 +62,17 @@ export async function main() {
   const allReasons = [...shellNotes];
   const allPackages = [];
   let shouldPrompt = false;
+  let mustBlock = false;
 
   for (const install of installs) {
     if (install.subcommand === 'ci') continue;
-    const verdict = evaluateInstall(install, { projectRoot, known });
+    const verdict = evaluateInstall(install, {
+      projectRoot,
+      known,
+      allowPackages: config.allowPackages,
+    });
     if (verdict.prompt) shouldPrompt = true;
+    if (verdict.block) mustBlock = true;
     allReasons.push(...verdict.reasons);
     allPackages.push(...verdict.packages.filter((pkg) => pkg.kind === 'registry'));
   }
@@ -68,7 +89,8 @@ export async function main() {
       const notes = await advisoryNotes(pinned, 2000);
       if (notes.length > 0) {
         shouldPrompt = true;
-        allReasons.push(...notes);
+        if (notes.some((note) => blocks(note, config))) mustBlock = true;
+        allReasons.push(...notes.map((note) => note.text));
       }
     } catch {
       // Offline verdict stands on its own.
@@ -93,7 +115,8 @@ export async function main() {
           2000,
         ),
       ]);
-      allReasons.push(...registryNotes, ...advisories);
+      if (advisories.some((note) => blocks(note, config))) mustBlock = true;
+      allReasons.push(...registryNotes, ...advisories.map((note) => note.text));
     } catch {
       // Offline verdict stands on its own.
     }
@@ -112,6 +135,19 @@ export async function main() {
 
   const bullets = allReasons.map((reason) => `  - ${reason}`).join('\n');
   const names = allPackages.map((pkg) => pkg.name).join(', ') || 'this command';
+
+  // A prompt is only a prompt when nothing already approved the command. An
+  // allow rule as ordinary as Bash(npm:*) swallows a hook's "ask" and the
+  // install runs with nobody told, which is exactly how a known bad version
+  // gets in. Exit 2 is documented to stop the call before permission rules are
+  // read, so the cases that must not slip through use that instead.
+  if (mustBlock) {
+    emitLoud(
+      `guardrails-js blocked this install (${names}):\n${bullets}\n\n` +
+        'Install the fixed version named above instead. If this exact version is ' +
+        'genuinely needed, add it to allowPackages in .guardrails-js.json.',
+    );
+  }
 
   ask(
     `guardrails-js flagged this install (${names}):\n${bullets}\n\nInstalling runs the package's install scripts on your machine straight away. Approve only if you recognise the package.`,

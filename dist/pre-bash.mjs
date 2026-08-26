@@ -13,6 +13,7 @@ var __export = (target, all) => {
 // src/supply-chain/osv.js
 var osv_exports = {};
 __export(osv_exports, {
+  BLOCKING_SEVERITIES: () => BLOCKING_SEVERITIES,
   actionableAdvisories: () => actionableAdvisories,
   advisoryNotes: () => advisoryNotes,
   enrich: () => enrich,
@@ -186,9 +187,12 @@ async function advisoryNotes(packages, timeoutMs = 2e3, now = Date.now()) {
     if (actionable.length === 0) continue;
     const worst = actionable[0];
     const upgrade = worst.fixed.filter((fix) => compare(fix, info.latest) <= 0).sort(compare).pop();
-    notes.push(
-      `${pkg.name}@${version} has ${actionable.length} known ${actionable.length === 1 ? "advisory" : "advisories"} with a fix available, worst is ${worst.severity} ${worst.id}. Upgrade to ${upgrade} or later.`
-    );
+    notes.push({
+      name: pkg.name,
+      version,
+      severity: worst.severity,
+      text: `${pkg.name}@${version} has ${actionable.length} known ${actionable.length === 1 ? "advisory" : "advisories"} with a fix available, worst is ${worst.severity} ${worst.id}. Upgrade to ${upgrade} or later.`
+    });
   }
   return notes;
 }
@@ -219,11 +223,12 @@ async function enrich(packages, timeoutMs = 2e3) {
   });
   return notes;
 }
-var CACHE_TTL_MS, SEVERITY_RANK;
+var CACHE_TTL_MS, SEVERITY_RANK, BLOCKING_SEVERITIES;
 var init_osv = __esm({
   "src/supply-chain/osv.js"() {
     CACHE_TTL_MS = 6 * 60 * 60 * 1e3;
     SEVERITY_RANK = { CRITICAL: 0, HIGH: 1, MODERATE: 2, MEDIUM: 2, LOW: 3 };
+    BLOCKING_SEVERITIES = /* @__PURE__ */ new Set(["CRITICAL", "HIGH"]);
   }
 });
 
@@ -250,6 +255,11 @@ function emitAdditionalContext(eventName, text) {
       additionalContext: text
     }
   });
+}
+function emitLoud(text) {
+  process.stderr.write(`${text}
+`);
+  process.exit(2);
 }
 function findUp(startDir, filename, limit = 30) {
   let dir = path.resolve(startDir);
@@ -279,6 +289,10 @@ var SECURITY_SEVERITIES = ["low", "medium", "high", "critical"];
 var DEFAULTS = {
   severityOverrides: {},
   disableRules: [],
+  // Package specifiers that never hard block, as "lodash" or "lodash@4.17.21".
+  // A blocked install has no other way past, so this is the release valve for a
+  // project that genuinely needs a version carrying an advisory.
+  allowPackages: [],
   excludePaths: [
     "**/node_modules/**",
     "**/dist/**",
@@ -331,6 +345,7 @@ function loadConfig(cwd = process.cwd()) {
     severityOverrides: { ...DEFAULTS.severityOverrides, ...fromFile.severityOverrides ?? {} },
     excludePaths: fromFile.excludePaths ?? DEFAULTS.excludePaths,
     disableRules: fromFile.disableRules ?? DEFAULTS.disableRules,
+    allowPackages: fromFile.allowPackages ?? DEFAULTS.allowPackages,
     configFile: file,
     projectRoot: file ? path2.dirname(file) : cwd
   };
@@ -3995,6 +4010,12 @@ function versionIsPinned(version) {
   if (version === "latest" || version === "*" || version === "next") return false;
   return /^\d+\.\d+\.\d+/.test(version);
 }
+function allows(allowPackages, name, version) {
+  if (!Array.isArray(allowPackages)) return false;
+  return allowPackages.some(
+    (entry) => entry === name || version != null && entry === `${name}@${version}`
+  );
+}
 function evaluateInstall(install, context) {
   const { projectRoot } = context;
   const known = context.known ?? knownPackageNames(projectRoot);
@@ -4002,6 +4023,7 @@ function evaluateInstall(install, context) {
   const packages = [];
   let weightHigh = 0;
   let weightLow = 0;
+  let block = false;
   const ignoresScripts = install.flags.some(
     (flag) => flag === "--ignore-scripts" || flag.startsWith("--ignore-scripts=")
   );
@@ -4023,6 +4045,7 @@ function evaluateInstall(install, context) {
           `${lower} has known compromised releases (${entry.versions.join(", ")}): ${incident?.description ?? "known bad release"}`
         );
         weightHigh += 1;
+        if (!allows(context.allowPackages, lower, parsed.version)) block = true;
         continue;
       }
     }
@@ -4078,6 +4101,7 @@ function evaluateInstall(install, context) {
   }
   return {
     prompt: weightHigh > 0 || weightLow >= 2,
+    block,
     reasons,
     packages,
     ignoresScripts,
@@ -4086,6 +4110,10 @@ function evaluateInstall(install, context) {
 }
 
 // src/hooks/pre-bash.js
+init_osv();
+function blocks(note, config) {
+  return BLOCKING_SEVERITIES.has(note.severity) && !allows(config.allowPackages, note.name, note.version);
+}
 function ask(reason) {
   emitJson({
     hookSpecificOutput: {
@@ -4118,10 +4146,16 @@ async function main() {
   const allReasons = [...shellNotes];
   const allPackages = [];
   let shouldPrompt = false;
+  let mustBlock = false;
   for (const install of installs) {
     if (install.subcommand === "ci") continue;
-    const verdict = evaluateInstall(install, { projectRoot, known });
+    const verdict = evaluateInstall(install, {
+      projectRoot,
+      known,
+      allowPackages: config.allowPackages
+    });
     if (verdict.prompt) shouldPrompt = true;
+    if (verdict.block) mustBlock = true;
     allReasons.push(...verdict.reasons);
     allPackages.push(...verdict.packages.filter((pkg) => pkg.kind === "registry"));
   }
@@ -4132,7 +4166,8 @@ async function main() {
       const notes = await advisoryNotes2(pinned, 2e3);
       if (notes.length > 0) {
         shouldPrompt = true;
-        allReasons.push(...notes);
+        if (notes.some((note) => blocks(note, config))) mustBlock = true;
+        allReasons.push(...notes.map((note) => note.text));
       }
     } catch {
     }
@@ -4154,7 +4189,8 @@ async function main() {
           2e3
         )
       ]);
-      allReasons.push(...registryNotes, ...advisories);
+      if (advisories.some((note) => blocks(note, config))) mustBlock = true;
+      allReasons.push(...registryNotes, ...advisories.map((note) => note.text));
     } catch {
     }
   }
@@ -4169,6 +4205,14 @@ async function main() {
   allReasons.push(...reasons);
   const bullets = allReasons.map((reason) => `  - ${reason}`).join("\n");
   const names = allPackages.map((pkg) => pkg.name).join(", ") || "this command";
+  if (mustBlock) {
+    emitLoud(
+      `guardrails-js blocked this install (${names}):
+${bullets}
+
+Install the fixed version named above instead. If this exact version is genuinely needed, add it to allowPackages in .guardrails-js.json.`
+    );
+  }
   ask(
     `guardrails-js flagged this install (${names}):
 ${bullets}

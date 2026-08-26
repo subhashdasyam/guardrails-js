@@ -138,6 +138,14 @@ function versionIsPinned(version) {
  * Score one install command. Returns { prompt, reasons, packages } where
  * reasons is a list of plain sentences that go straight into the prompt text.
  */
+/** True when the config explicitly permits this package, or this exact version. */
+export function allows(allowPackages, name, version) {
+  if (!Array.isArray(allowPackages)) return false;
+  return allowPackages.some(
+    (entry) => entry === name || (version != null && entry === `${name}@${version}`),
+  );
+}
+
 export function evaluateInstall(install, context) {
   const { projectRoot } = context;
   const known = context.known ?? knownPackageNames(projectRoot);
@@ -146,6 +154,7 @@ export function evaluateInstall(install, context) {
   const packages = [];
   let weightHigh = 0;
   let weightLow = 0;
+  let block = false;
 
   const ignoresScripts = install.flags.some(
     (flag) => flag === '--ignore-scripts' || flag.startsWith('--ignore-scripts='),
@@ -172,6 +181,9 @@ export function evaluateInstall(install, context) {
           `${lower} has known compromised releases (${entry.versions.join(', ')}): ${incident?.description ?? 'known bad release'}`,
         );
         weightHigh += 1;
+        // Shipped malware. There is no version of this worth prompting about,
+        // and a prompt is swallowed anyway by an allow rule covering npm.
+        if (!allows(context.allowPackages, lower, parsed.version)) block = true;
         continue;
       }
     }
@@ -239,6 +251,7 @@ export function evaluateInstall(install, context) {
 
   return {
     prompt: weightHigh > 0 || weightLow >= 2,
+    block,
     reasons,
     packages,
     ignoresScripts,

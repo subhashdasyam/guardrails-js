@@ -103,10 +103,41 @@ So the check asks the registry what the latest published version actually is, an
 
 The rule pays off in both directions:
 
-- ✅ `lodash@4.17.11` → seven reachable fixes → **prompt**
+- 🛑 `lodash@4.17.11` → seven reachable fixes, worst CRITICAL → **blocked**
 - 🤐 `lodash@4.17.21` back when 4.17.23 did not exist → nothing reachable → **silent**
-- ✅ `lodash@4.17.21` today, now that 4.18.1 is out → reachable → **prompt, and it names 4.18.0**
+- 🛑 `lodash@4.17.21` today, now that 4.18.1 is out → reachable HIGH → **blocked, and it names 4.18.0**
 - 🤐 `npm install express` unpinned → resolves to latest, nothing reachable → **silent**
+
+### 🛑 Why it blocks instead of asking
+
+This is the one place the plugin stops you rather than advising you, and it took a real miss to get here.
+
+The gate used to answer `permissionDecision: "ask"`. A hook's `ask` is not a gate. Claude Code weighs it against your permission rules, so a line as ordinary as this in your `settings.json`:
+
+```json
+"allow": ["Bash(npm:*)"]
+```
+
+silently swallowed it. `npm install lodash@4.17.17` with six known advisories installed with no prompt, no message, nothing. The single most important check in the plugin was off for anyone who had ever clicked "don't ask again" on an npm command. 😬
+
+Exiting 2 is documented to stop the call **before** permission rules are read, so that is what a genuine gate uses now:
+
+| Signal | What happens |
+|---|---|
+| Known compromised release on the denylist | 🛑 Blocked |
+| Advisory rated CRITICAL or HIGH **with a reachable fix** | 🛑 Blocked |
+| Typosquat, unpinned, unknown name, no lockfile | ❓ Prompt |
+| Everything else worth a word | 💬 Note to Claude |
+
+Blocking only ever fires when there is somewhere to upgrade to, so Claude reads the reason and installs the fixed version in the same turn, which is the whole point.
+
+Need a version anyway? That is the one way past:
+
+```json
+{ "allowPackages": ["lodash@4.17.21", "some-package"] }
+```
+
+A bare name covers every version of it. An exact pin covers only that one. Allowing it silences the block, not the reason, so you still see why. ⚠️
 
 ### ⚙️ How it behaves
 
@@ -537,10 +568,13 @@ To change any of it, drop a `.guardrails-js.json` in your project root. Every fi
   "report": false,
   "priming": true,
   "disableRules": ["PROXY-01", "RATE-01"],
+  "allowPackages": ["lodash@4.17.21"],
   "severityOverrides": { "HTTP-01": "low", "IDOR-01": "off" },
   "excludePaths": ["**/legacy/**", "**/*.generated.ts"]
 }
 ```
+
+`allowPackages` is the only way past a [blocked install](#-why-it-blocks-instead-of-asking). `disableRules` does not cover it, because an advisory is not a rule and has no id to name.
 
 ### 🎚️ The four you are most likely to want
 

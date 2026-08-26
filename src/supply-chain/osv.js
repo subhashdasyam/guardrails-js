@@ -204,10 +204,15 @@ export async function queryOsvDetailed(name, version, timeoutMs = 2000, now = Da
  *
  * An advisory whose only fix is a version nobody has published yet is not
  * actionable: there is nothing to upgrade to, so saying it out loud teaches
- * people to click through. lodash 4.17.21 is the case that proves it. It is the
- * current release and it carries three advisories, all fixed in 4.17.23 or
- * 4.18.0, neither of which exists. Reporting those would fire on the most
- * installed package in the ecosystem, every time, with no action available.
+ * people to click through.
+ *
+ * lodash is the case that proved it, and then proved why this is a live check
+ * rather than a list. When this was written, 4.17.21 was the current release
+ * and carried three advisories fixed in 4.17.23 and 4.18.0, neither of which
+ * existed, so reporting them would have fired on the most installed package in
+ * the ecosystem with no action available. Both versions exist now and latest is
+ * 4.18.1, so the same three advisories became worth reporting without a line of
+ * this changing. Never hardcode which advisories are reachable.
  */
 export function actionableAdvisories(advisories, latestPublished) {
   if (!latestPublished) return [];
@@ -244,15 +249,33 @@ export async function advisoryNotes(packages, timeoutMs = 2000, now = Date.now()
       .sort(compare)
       .pop();
 
-    notes.push(
-      `${pkg.name}@${version} has ${actionable.length} known ${
+    notes.push({
+      name: pkg.name,
+      version,
+      severity: worst.severity,
+      text: `${pkg.name}@${version} has ${actionable.length} known ${
         actionable.length === 1 ? 'advisory' : 'advisories'
       } with a fix available, worst is ${worst.severity} ${worst.id}. Upgrade to ${upgrade} or later.`,
-    );
+    });
   }
 
   return notes;
 }
+
+/**
+ * Severities that get blocked outright rather than prompted about.
+ *
+ * A prompt is worth nothing when an allow rule already covers the command.
+ * Claude Code evaluates a hook's "ask" alongside the permission rules, so a
+ * plain `Bash(npm:*)` in someone's allow list silently swallows it and the
+ * install proceeds with nobody told. Exiting 2 is documented to stop the call
+ * before permission rules are read, so it is the only signal that survives.
+ *
+ * Only advisories with a reachable fix get this far, so blocking always leaves
+ * an action available: install the fixed version instead. That is the whole
+ * point, since Claude reads the reason and retries with the version we named.
+ */
+export const BLOCKING_SEVERITIES = new Set(['CRITICAL', 'HIGH']);
 
 /** Registry facts about how new and how used a package is. */
 export async function enrich(packages, timeoutMs = 2000) {
