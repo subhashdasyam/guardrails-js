@@ -4160,10 +4160,11 @@ async function main() {
     allPackages.push(...verdict.packages.filter((pkg) => pkg.kind === "registry"));
   }
   const pinned = allPackages.filter((pkg) => /^\d+\.\d+\.\d+/.test(pkg.version ?? ""));
-  if (config.network && !shouldPrompt && pinned.length > 0) {
+  const worthLookingUp = pinned.length > 0 || shouldPrompt;
+  if (config.network && allPackages.length > 0 && worthLookingUp) {
     try {
       const { advisoryNotes: advisoryNotes2 } = await Promise.resolve().then(() => (init_osv(), osv_exports));
-      const notes = await advisoryNotes2(pinned, 2e3);
+      const notes = await advisoryNotes2(allPackages, 2e3);
       if (notes.length > 0) {
         shouldPrompt = true;
         if (notes.some((note) => blocks(note, config))) mustBlock = true;
@@ -4180,17 +4181,8 @@ async function main() {
   }
   if (config.network && allPackages.length > 0) {
     try {
-      const { enrich: enrich2, advisoryNotes: advisoryNotes2 } = await Promise.resolve().then(() => (init_osv(), osv_exports));
-      const [registryNotes, advisories] = await Promise.all([
-        enrich2(allPackages, 2e3),
-        // Skip the ones already checked above, so nothing is said twice.
-        advisoryNotes2(
-          allPackages.filter((pkg) => !pinned.includes(pkg)),
-          2e3
-        )
-      ]);
-      if (advisories.some((note) => blocks(note, config))) mustBlock = true;
-      allReasons.push(...registryNotes, ...advisories.map((note) => note.text));
+      const { enrich: enrich2 } = await Promise.resolve().then(() => (init_osv(), osv_exports));
+      allReasons.push(...await enrich2(allPackages, 2e3));
     } catch {
     }
   }

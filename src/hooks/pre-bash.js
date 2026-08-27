@@ -83,10 +83,23 @@ export async function main() {
   // passes every offline signal and nothing is ever said about it.
   const pinned = allPackages.filter((pkg) => /^\d+\.\d+\.\d+/.test(pkg.version ?? ''));
 
-  if (config.network && !shouldPrompt && pinned.length > 0) {
+  // One lookup, every package, whatever else already fired.
+  //
+  // This used to be two. The first ran only when nothing else had decided to
+  // prompt, and the second skipped the pinned packages because the first was
+  // assumed to have covered them. So the moment any offline signal fired, a
+  // pinned version fell through the gap between them: no advisory fetched, no
+  // block, and not a word about it. `npm install expres lodash@4.17.10` let a
+  // CRITICAL through on the strength of the typosquat next to it, and so did
+  // `npm install lodash@4.17.10 --prefix <dir>`, whose path argument reads as
+  // a specifier. The split only ever existed to avoid querying twice, which is
+  // what the cache is for.
+  const worthLookingUp = pinned.length > 0 || shouldPrompt;
+
+  if (config.network && allPackages.length > 0 && worthLookingUp) {
     try {
       const { advisoryNotes } = await import('../supply-chain/osv.js');
-      const notes = await advisoryNotes(pinned, 2000);
+      const notes = await advisoryNotes(allPackages, 2000);
       if (notes.length > 0) {
         shouldPrompt = true;
         if (notes.some((note) => blocks(note, config))) mustBlock = true;
@@ -106,17 +119,8 @@ export async function main() {
 
   if (config.network && allPackages.length > 0) {
     try {
-      const { enrich, advisoryNotes } = await import('../supply-chain/osv.js');
-      const [registryNotes, advisories] = await Promise.all([
-        enrich(allPackages, 2000),
-        // Skip the ones already checked above, so nothing is said twice.
-        advisoryNotes(
-          allPackages.filter((pkg) => !pinned.includes(pkg)),
-          2000,
-        ),
-      ]);
-      if (advisories.some((note) => blocks(note, config))) mustBlock = true;
-      allReasons.push(...registryNotes, ...advisories.map((note) => note.text));
+      const { enrich } = await import('../supply-chain/osv.js');
+      allReasons.push(...(await enrich(allPackages, 2000)));
     } catch {
       // Offline verdict stands on its own.
     }
