@@ -1,5 +1,230 @@
 // Built by scripts/build.mjs. Do not edit. Source lives in src/.
 
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// src/supply-chain/osv.js
+import fs6 from "node:fs";
+import os2 from "node:os";
+import path6 from "node:path";
+function cacheDir() {
+  const base = process.env.CLAUDE_PLUGIN_DATA || path6.join(os2.homedir(), ".claude", "plugins", "data", "guardrails-js");
+  return path6.join(base, "cache");
+}
+function cacheFile(key) {
+  const safe = String(key).replace(/[^A-Za-z0-9_.@-]/g, "-");
+  return path6.join(cacheDir(), `${safe}.json`);
+}
+function readCache(key, now) {
+  try {
+    const raw = JSON.parse(fs6.readFileSync(cacheFile(key), "utf8"));
+    if (now - raw.at > CACHE_TTL_MS) return null;
+    return raw.value;
+  } catch {
+    return null;
+  }
+}
+function writeCache(key, value, now) {
+  try {
+    fs6.mkdirSync(cacheDir(), { recursive: true });
+    const file = cacheFile(key);
+    const temp = `${file}.${process.pid}.tmp`;
+    fs6.writeFileSync(temp, JSON.stringify({ at: now, value }), "utf8");
+    fs6.renameSync(temp, file);
+  } catch {
+  }
+}
+async function fetchJson(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function queryRegistry(name, timeoutMs = 2e3, now = Date.now()) {
+  const key = `npm-${name}`;
+  const cached = readCache(key, now);
+  if (cached !== null) return cached;
+  const json = await fetchJson(
+    `https://registry.npmjs.org/${encodeURIComponent(name).replace("%40", "@")}`,
+    { headers: { accept: "application/json" } },
+    timeoutMs
+  );
+  if (!json) return null;
+  const latest = json["dist-tags"]?.latest ?? null;
+  const times = json.time ?? {};
+  const latestPublished = latest ? times[latest] : null;
+  const value = {
+    exists: true,
+    latest,
+    created: times.created ?? null,
+    latestPublished,
+    ageDays: latestPublished ? Math.floor((now - new Date(latestPublished).getTime()) / 864e5) : null,
+    versionCount: Object.keys(json.versions ?? {}).length,
+    repository: json.repository?.url ?? null,
+    deprecated: Boolean(json.versions?.[latest]?.deprecated)
+  };
+  writeCache(key, value, now);
+  return value;
+}
+function compare(a, b) {
+  const left = String(a).match(/\d+/g)?.map(Number) ?? [];
+  const right = String(b).match(/\d+/g)?.map(Number) ?? [];
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const l = left[i] ?? 0;
+    const r = right[i] ?? 0;
+    if (l !== r) return l < r ? -1 : 1;
+  }
+  return 0;
+}
+async function queryOsvDetailed(name, version, timeoutMs = 2e3, now = Date.now()) {
+  const key = `osvfull-${name}@${version}`;
+  const cached = readCache(key, now);
+  if (cached !== null) return cached;
+  const json = await fetchJson(
+    "https://api.osv.dev/v1/query",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ package: { name, ecosystem: "npm" }, version })
+    },
+    timeoutMs
+  );
+  if (!json) return [];
+  const advisories = (json.vulns ?? []).map((vuln) => {
+    const fixed = [];
+    for (const affected of vuln.affected ?? []) {
+      if (affected.package?.name !== name) continue;
+      for (const range of affected.ranges ?? []) {
+        for (const event of range.events ?? []) {
+          if (event.fixed) fixed.push(event.fixed);
+        }
+      }
+    }
+    return {
+      id: vuln.id,
+      severity: String(vuln.database_specific?.severity ?? "").toUpperCase() || "UNKNOWN",
+      fixed
+    };
+  });
+  writeCache(key, advisories, now);
+  return advisories;
+}
+function actionableAdvisories(advisories, latestPublished) {
+  if (!latestPublished) return [];
+  return advisories.filter(
+    (advisory) => advisory.fixed.some((fix) => compare(fix, latestPublished) <= 0)
+  ).sort(
+    (a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9)
+  );
+}
+async function advisoryNotes(packages, timeoutMs = 2e3, now = Date.now(), limit = 4) {
+  const notes = [];
+  for (const pkg of packages.slice(0, limit)) {
+    const info = await queryRegistry(pkg.name, timeoutMs, now);
+    if (!info?.latest) continue;
+    const version = pkg.version ?? info.latest;
+    const advisories = await queryOsvDetailed(pkg.name, version, timeoutMs, now);
+    const actionable = actionableAdvisories(advisories, info.latest);
+    if (actionable.length === 0) continue;
+    const worst = actionable[0];
+    const upgrade = worst.fixed.filter((fix) => compare(fix, info.latest) <= 0).sort(compare).pop();
+    notes.push({
+      name: pkg.name,
+      version,
+      severity: worst.severity,
+      text: `${pkg.name}@${version} has ${actionable.length} known ${actionable.length === 1 ? "advisory" : "advisories"} with a fix available, worst is ${worst.severity} ${worst.id}. Upgrade to ${upgrade} or later.`
+    });
+  }
+  return notes;
+}
+var CACHE_TTL_MS, SEVERITY_RANK, BLOCKING_SEVERITIES;
+var init_osv = __esm({
+  "src/supply-chain/osv.js"() {
+    CACHE_TTL_MS = 6 * 60 * 60 * 1e3;
+    SEVERITY_RANK = { CRITICAL: 0, HIGH: 1, MODERATE: 2, MEDIUM: 2, LOW: 3 };
+    BLOCKING_SEVERITIES = /* @__PURE__ */ new Set(["CRITICAL", "HIGH"]);
+  }
+});
+
+// src/supply-chain/allow.js
+function allows(allowPackages, name, version) {
+  if (!Array.isArray(allowPackages)) return false;
+  return allowPackages.some(
+    (entry) => entry === name || version != null && entry === `${name}@${version}`
+  );
+}
+var init_allow = __esm({
+  "src/supply-chain/allow.js"() {
+  }
+});
+
+// src/supply-chain/manifest-advisories.js
+var manifest_advisories_exports = {};
+__export(manifest_advisories_exports, {
+  LOOKUP_CAP: () => LOOKUP_CAP,
+  findingSeverity: () => findingSeverity,
+  manifestAdvisories: () => manifestAdvisories,
+  pinnedDependencies: () => pinnedDependencies,
+  worstFirst: () => worstFirst
+});
+function pinnedDependencies(pkg) {
+  const declared = { ...pkg?.dependencies ?? {}, ...pkg?.devDependencies ?? {} };
+  const pinned = [];
+  for (const [name, range] of Object.entries(declared)) {
+    const version = String(range ?? "").trim();
+    if (!EXACT.test(version)) continue;
+    pinned.push({ name, version });
+  }
+  return pinned;
+}
+function worstFirst(notes) {
+  return [...notes].sort((a, b) => (RANK[a.severity] ?? 9) - (RANK[b.severity] ?? 9));
+}
+async function manifestAdvisories(pkg, config, timeoutMs = 3e3, deadlineMs = 6e3) {
+  const pinned = pinnedDependencies(pkg);
+  if (pinned.length === 0) return { notes: [], checked: 0, skipped: 0 };
+  const checking = pinned.slice(0, LOOKUP_CAP);
+  const notes = await Promise.race([
+    advisoryNotes(checking, timeoutMs, Date.now(), LOOKUP_CAP),
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve([]), deadlineMs);
+      timer.unref?.();
+    })
+  ]);
+  const kept = notes.filter((note) => !allows(config.allowPackages, note.name, note.version));
+  return {
+    notes: worstFirst(kept),
+    checked: checking.length,
+    skipped: pinned.length - checking.length
+  };
+}
+function findingSeverity(advisorySeverity) {
+  return BLOCKING_SEVERITIES.has(advisorySeverity) ? advisorySeverity.toLowerCase() : "medium";
+}
+var EXACT, LOOKUP_CAP, RANK;
+var init_manifest_advisories = __esm({
+  "src/supply-chain/manifest-advisories.js"() {
+    init_osv();
+    init_allow();
+    EXACT = /^\d+\.\d+\.\d+$/;
+    LOOKUP_CAP = 10;
+    RANK = { CRITICAL: 0, HIGH: 1, MODERATE: 2, MEDIUM: 2, LOW: 3 };
+  }
+});
 
 // src/hooks/util.js
 import fs from "node:fs";
@@ -809,7 +1034,7 @@ function runManifestRules(projectRoot, config, pkg = null, rules = manifest_defa
 }
 
 // src/hooks/session-start.js
-function baselineNotes(projectRoot, pkg, config) {
+async function baselineNotes(projectRoot, pkg, config) {
   const notes = [];
   for (const finding of runManifestRules(projectRoot, config, pkg)) {
     notes.push(`${finding.ruleId} ${finding.message} Fix: ${finding.fix.split("\n")[0]}`);
@@ -817,9 +1042,20 @@ function baselineNotes(projectRoot, pkg, config) {
   for (const finding of checkDependencies(pkg, readLockedVersions(projectRoot))) {
     notes.push(describeDependencyFinding(finding));
   }
+  if (config.network) {
+    try {
+      const { manifestAdvisories: manifestAdvisories2 } = await Promise.resolve().then(() => (init_manifest_advisories(), manifest_advisories_exports));
+      const { notes: advisories, skipped } = await manifestAdvisories2(pkg, config, 2e3, 4e3);
+      for (const advisory of advisories) notes.push(advisory.text);
+      if (skipped > 0) {
+        notes.push(`${skipped} more pinned dependencies were not checked for advisories.`);
+      }
+    } catch {
+    }
+  }
   return notes;
 }
-function main() {
+async function main() {
   const input = readHookInput();
   const cwd = input.cwd || process.cwd();
   resetSession(input.session_id);
@@ -830,7 +1066,7 @@ function main() {
   if (!pkg) return;
   const dependencies = allDependencies(pkg);
   const packs = packsFor(dependencies);
-  const notes = baselineNotes(projectRoot, pkg, config);
+  const notes = await baselineNotes(projectRoot, pkg, config);
   const parts = [
     `guardrails-js is active. Stack detected: ${stackLabel(dependencies)}.`,
     "",
@@ -847,7 +1083,7 @@ function main() {
   process.stdout.write(`${parts.join("\n")}
 `);
 }
-main();
+await main();
 export {
   main
 };

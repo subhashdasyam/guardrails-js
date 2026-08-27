@@ -14804,11 +14804,17 @@ function pinnedDependencies(pkg) {
 function worstFirst(notes) {
   return [...notes].sort((a, b) => (RANK[a.severity] ?? 9) - (RANK[b.severity] ?? 9));
 }
-async function manifestAdvisories(pkg, config, timeoutMs = 3e3) {
+async function manifestAdvisories(pkg, config, timeoutMs = 3e3, deadlineMs = 6e3) {
   const pinned = pinnedDependencies(pkg);
   if (pinned.length === 0) return { notes: [], checked: 0, skipped: 0 };
   const checking = pinned.slice(0, LOOKUP_CAP);
-  const notes = await advisoryNotes(checking, timeoutMs, Date.now(), LOOKUP_CAP);
+  const notes = await Promise.race([
+    advisoryNotes(checking, timeoutMs, Date.now(), LOOKUP_CAP),
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve([]), deadlineMs);
+      timer.unref?.();
+    })
+  ]);
   const kept = notes.filter((note) => !allows(config.allowPackages, note.name, note.version));
   return {
     notes: worstFirst(kept),

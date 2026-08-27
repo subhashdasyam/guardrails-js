@@ -295,3 +295,46 @@ test('at most four packages are looked up', async () => {
 
   assert.ok(calls.length <= 4, `expected at most four lookups, made ${calls.length}`);
 });
+
+test('the manifest pass gives up rather than overrunning the hook that called it', async () => {
+  // The lookups run one after another, so ten pins against a network that never
+  // answers is ten timeouts end to end. SessionStart has its own timeout and is
+  // on the critical path of opening a session: overrun it and the process is
+  // killed, losing the priming that always worked because of an optional
+  // lookup. Whatever has not answered is worth less than starting on time.
+  isolate();
+  globalThis.fetch = () => new Promise(() => {});
+
+  const { manifestAdvisories } = await import('../src/supply-chain/manifest-advisories.js');
+  const pkg = {
+    dependencies: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`pkg-${i}`, '1.0.0'])),
+  };
+
+  const started = Date.now();
+  const { notes } = await manifestAdvisories(pkg, { allowPackages: [] }, 5000, 300);
+  const elapsed = Date.now() - started;
+
+  globalThis.fetch = realFetch;
+
+  assert.deepEqual(notes, [], 'nothing answered, so nothing is claimed');
+  assert.ok(elapsed < 2000, `gave up after ${elapsed}ms, which is not giving up`);
+});
+
+test('a range is not a pin', async () => {
+  const { pinnedDependencies } = await import('../src/supply-chain/manifest-advisories.js');
+
+  assert.deepEqual(pinnedDependencies({ dependencies: { a: '1.2.3' } }), [
+    { name: 'a', version: '1.2.3' },
+  ]);
+
+  // ^1.2.3 installs the newest 1.x, so an advisory against 1.2.3 usually does
+  // not describe what lands. Flagging these would fire on the most common way
+  // to declare a dependency, which is how a checker teaches people to ignore it.
+  for (const range of ['^1.2.3', '~1.2.3', '>=1.2.3', '1.x', 'latest', '*', '']) {
+    assert.deepEqual(
+      pinnedDependencies({ dependencies: { a: range } }),
+      [],
+      `${JSON.stringify(range)} is a range, not a pinned version`,
+    );
+  }
+});

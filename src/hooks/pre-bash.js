@@ -80,9 +80,14 @@ export async function main() {
         const worst = notes.slice(0, 3).map((note) => note.text);
         const more = notes.length > 3 ? ` ${notes.length - 3} other pinned versions too.` : '';
         const capped = skipped > 0 ? ` ${skipped} more were not checked.` : '';
+        // Say who found it. This arrives as context rather than on screen, so
+        // without asking, the advisories get relayed as though npm audit had
+        // reported them and the user cannot tell the check ran at all. Knowing
+        // it ran is the difference between "clean" and "never looked".
         emitAdditionalContext(
           'PreToolUse',
-          `guardrails-js on what this installs: ${worst.join(' ')}${more}${capped}`,
+          `guardrails-js checked what this installs: ${worst.join(' ')}${more}${capped} ` +
+            'Tell the user guardrails-js found these, so they know it looked.',
         );
         return;
       }

@@ -590,6 +590,7 @@ Both of those are CRITICAL with a fix available, so Claude is interrupted and fi
 - **CRITICAL and HIGH interrupt. MODERATE and below are a note.**
 - **Up to 10 pins per write**, and it tells you when it checked fewer.
 - **`npm install` with no arguments reports, never blocks.** The manifest is already committed, so refusing to install would strand the project. The fix is an edit to `package.json`, not a different command.
+- **It also runs when a session opens**, so a repo whose `package.json` was written weeks ago still gets checked. Nobody has to touch the file.
 - `"network": false` turns all of it off.
 
 ### 🎚️ The four you are most likely to want

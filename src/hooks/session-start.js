@@ -16,7 +16,7 @@ import {
   describeDependencyFinding,
 } from '../supply-chain/dependencies.js';
 
-function baselineNotes(projectRoot, pkg, config) {
+async function baselineNotes(projectRoot, pkg, config) {
   const notes = [];
 
   // The supply chain rules cover the lockfile, install scripts, known bad
@@ -30,10 +30,30 @@ function baselineNotes(projectRoot, pkg, config) {
     notes.push(describeDependencyFinding(finding));
   }
 
+  // What the pinned versions carry, asked once when the session opens.
+  //
+  // Until now this only ran when someone wrote package.json. Open a project
+  // whose manifest was written weeks ago and nothing ever looked at it: a repo
+  // pinning two criticals reported only that install scripts were enabled. The
+  // manifest is the one thing worth checking that nobody edits on a given day.
+  if (config.network) {
+    try {
+      const { manifestAdvisories } = await import('../supply-chain/manifest-advisories.js');
+      const { notes: advisories, skipped } = await manifestAdvisories(pkg, config, 2000, 4000);
+
+      for (const advisory of advisories) notes.push(advisory.text);
+      if (skipped > 0) {
+        notes.push(`${skipped} more pinned dependencies were not checked for advisories.`);
+      }
+    } catch {
+      // A session must start whether or not osv.dev answers.
+    }
+  }
+
   return notes;
 }
 
-export function main() {
+export async function main() {
   const input = readHookInput();
   const cwd = input.cwd || process.cwd();
 
@@ -52,7 +72,7 @@ export function main() {
 
   const dependencies = allDependencies(pkg);
   const packs = packsFor(dependencies);
-  const notes = baselineNotes(projectRoot, pkg, config);
+  const notes = await baselineNotes(projectRoot, pkg, config);
 
   const parts = [
     `guardrails-js is active. Stack detected: ${stackLabel(dependencies)}.`,
@@ -73,4 +93,4 @@ export function main() {
   process.stdout.write(`${parts.join('\n')}\n`);
 }
 
-main();
+await main();
