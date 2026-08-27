@@ -10,6 +10,18 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// src/supply-chain/allow.js
+function allows(allowPackages, name, version) {
+  if (!Array.isArray(allowPackages)) return false;
+  return allowPackages.some(
+    (entry) => entry === name || version != null && entry === `${name}@${version}`
+  );
+}
+var init_allow = __esm({
+  "src/supply-chain/allow.js"() {
+  }
+});
+
 // src/supply-chain/osv.js
 var osv_exports = {};
 __export(osv_exports, {
@@ -176,9 +188,9 @@ function actionableAdvisories(advisories, latestPublished) {
     (a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9)
   );
 }
-async function advisoryNotes(packages, timeoutMs = 2e3, now = Date.now()) {
+async function advisoryNotes(packages, timeoutMs = 2e3, now = Date.now(), limit = 4) {
   const notes = [];
-  for (const pkg of packages.slice(0, 4)) {
+  for (const pkg of packages.slice(0, limit)) {
     const info = await queryRegistry(pkg.name, timeoutMs, now);
     if (!info?.latest) continue;
     const version = pkg.version ?? info.latest;
@@ -229,6 +241,54 @@ var init_osv = __esm({
     CACHE_TTL_MS = 6 * 60 * 60 * 1e3;
     SEVERITY_RANK = { CRITICAL: 0, HIGH: 1, MODERATE: 2, MEDIUM: 2, LOW: 3 };
     BLOCKING_SEVERITIES = /* @__PURE__ */ new Set(["CRITICAL", "HIGH"]);
+  }
+});
+
+// src/supply-chain/manifest-advisories.js
+var manifest_advisories_exports = {};
+__export(manifest_advisories_exports, {
+  LOOKUP_CAP: () => LOOKUP_CAP,
+  findingSeverity: () => findingSeverity,
+  manifestAdvisories: () => manifestAdvisories,
+  pinnedDependencies: () => pinnedDependencies,
+  worstFirst: () => worstFirst
+});
+function pinnedDependencies(pkg) {
+  const declared = { ...pkg?.dependencies ?? {}, ...pkg?.devDependencies ?? {} };
+  const pinned = [];
+  for (const [name, range] of Object.entries(declared)) {
+    const version = String(range ?? "").trim();
+    if (!EXACT.test(version)) continue;
+    pinned.push({ name, version });
+  }
+  return pinned;
+}
+function worstFirst(notes) {
+  return [...notes].sort((a, b) => (RANK[a.severity] ?? 9) - (RANK[b.severity] ?? 9));
+}
+async function manifestAdvisories(pkg, config, timeoutMs = 3e3) {
+  const pinned = pinnedDependencies(pkg);
+  if (pinned.length === 0) return { notes: [], checked: 0, skipped: 0 };
+  const checking = pinned.slice(0, LOOKUP_CAP);
+  const notes = await advisoryNotes(checking, timeoutMs, Date.now(), LOOKUP_CAP);
+  const kept = notes.filter((note) => !allows(config.allowPackages, note.name, note.version));
+  return {
+    notes: worstFirst(kept),
+    checked: checking.length,
+    skipped: pinned.length - checking.length
+  };
+}
+function findingSeverity(advisorySeverity) {
+  return BLOCKING_SEVERITIES.has(advisorySeverity) ? advisorySeverity.toLowerCase() : "medium";
+}
+var EXACT, LOOKUP_CAP, RANK;
+var init_manifest_advisories = __esm({
+  "src/supply-chain/manifest-advisories.js"() {
+    init_osv();
+    init_allow();
+    EXACT = /^\d+\.\d+\.\d+$/;
+    LOOKUP_CAP = 10;
+    RANK = { CRITICAL: 0, HIGH: 1, MODERATE: 2, MEDIUM: 2, LOW: 3 };
   }
 });
 
@@ -541,6 +601,7 @@ function riskyShellPatterns(command) {
 }
 
 // src/supply-chain/signals.js
+init_allow();
 import fs3 from "node:fs";
 import path3 from "node:path";
 
@@ -4029,12 +4090,6 @@ function versionIsPinned(version) {
   if (version === "latest" || version === "*" || version === "next") return false;
   return /^\d+\.\d+\.\d+/.test(version);
 }
-function allows(allowPackages, name, version) {
-  if (!Array.isArray(allowPackages)) return false;
-  return allowPackages.some(
-    (entry) => entry === name || version != null && entry === `${name}@${version}`
-  );
-}
 function evaluateInstall(install, context) {
   const { projectRoot } = context;
   const known = context.known ?? knownPackageNames(projectRoot);
@@ -4160,6 +4215,27 @@ async function main() {
       `guardrails-js note on this command: ${shellNotes.join("; ")}.`
     );
     return;
+  }
+  const bare = installs.some(
+    (install) => install.subcommand !== "ci" && install.packages.length === 0
+  );
+  if (bare && config.network) {
+    try {
+      const { manifestAdvisories: manifestAdvisories2 } = await Promise.resolve().then(() => (init_manifest_advisories(), manifest_advisories_exports));
+      const { pkg } = readPackageJson(projectRoot);
+      const { notes, skipped } = await manifestAdvisories2(pkg, config);
+      if (notes.length > 0) {
+        const worst = notes.slice(0, 3).map((note) => note.text);
+        const more = notes.length > 3 ? ` ${notes.length - 3} other pinned versions too.` : "";
+        const capped = skipped > 0 ? ` ${skipped} more were not checked.` : "";
+        emitAdditionalContext(
+          "PreToolUse",
+          `guardrails-js on what this installs: ${worst.join(" ")}${more}${capped}`
+        );
+        return;
+      }
+    } catch {
+    }
   }
   const known = knownPackageNames(projectRoot);
   const allReasons = [...shellNotes];

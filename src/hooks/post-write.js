@@ -32,7 +32,7 @@ function manifestPackage(projectRoot) {
   }
 }
 
-function checkManifest(filePath, input) {
+async function checkManifest(filePath, input) {
   const projectRoot = path.dirname(filePath);
   const config = loadConfig(projectRoot);
 
@@ -69,6 +69,40 @@ function checkManifest(filePath, input) {
     })),
   );
 
+  // What the pinned versions are actually known to carry. The rules above cover
+  // the project's shape and a fixed list of framework ranges; neither of them
+  // asks whether lodash@4.16.0 has ten advisories against it.
+  if (config.network) {
+    try {
+      const { manifestAdvisories, findingSeverity } = await import(
+        '../supply-chain/manifest-advisories.js'
+      );
+      const { notes, skipped } = await manifestAdvisories(pkg ?? manifestPackage(projectRoot), config);
+
+      findings.push(
+        ...notes.map((note) => ({
+          ruleId: 'SUPPLY-CVE',
+          title: 'A pinned dependency has known advisories',
+          severity: findingSeverity(note.severity),
+          owasp2025: 'A03',
+          cwe: ['CWE-1395', 'CWE-937'],
+          api: null,
+          line: 1,
+          column: 1,
+          evidence: `${note.name}@${note.version}`,
+          message:
+            skipped > 0
+              ? `${note.text} ${skipped} more pinned ${skipped === 1 ? 'dependency was' : 'dependencies were'} not checked.`
+              : note.text,
+          fix: `npm install ${note.name}@<the version named above>`,
+          filePath: 'package.json',
+        })),
+      );
+    } catch {
+      // The offline rules stand on their own.
+    }
+  }
+
   if (findings.length === 0) return;
 
   applyLoopGuard(findings, input.session_id, 'package.json');
@@ -96,7 +130,7 @@ function filePathFrom(toolInput) {
   );
 }
 
-export function main() {
+export async function main() {
   const input = readHookInput();
 
   const toolName = input.tool_name;
@@ -108,7 +142,7 @@ export function main() {
   // package.json, .npmrc, and lockfiles are not code, but they decide what code
   // gets installed and whether install scripts run, so they get their own path.
   if (isManifestFile(filePath)) {
-    checkManifest(filePath, input);
+    await checkManifest(filePath, input);
     return;
   }
 
@@ -164,4 +198,4 @@ export function main() {
   emitAdditionalContext('PostToolUse', formatQuiet(quiet, relative));
 }
 
-main();
+await main();

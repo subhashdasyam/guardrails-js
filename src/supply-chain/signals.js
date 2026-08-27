@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { allows } from './allow.js';
 import denylist from './data/denylist.json' with { type: 'json' };
 import topPackages from './data/top-packages.json' with { type: 'json' };
 import { parseSpecifier } from './parse-command.js';
@@ -138,14 +139,6 @@ function versionIsPinned(version) {
  * Score one install command. Returns { prompt, reasons, packages } where
  * reasons is a list of plain sentences that go straight into the prompt text.
  */
-/** True when the config explicitly permits this package, or this exact version. */
-export function allows(allowPackages, name, version) {
-  if (!Array.isArray(allowPackages)) return false;
-  return allowPackages.some(
-    (entry) => entry === name || (version != null && entry === `${name}@${version}`),
-  );
-}
-
 export function evaluateInstall(install, context) {
   const { projectRoot } = context;
   const known = context.known ?? knownPackageNames(projectRoot);
@@ -259,4 +252,4 @@ export function evaluateInstall(install, context) {
   };
 }
 
-export { denylist, TOP_NAMES };
+export { allows, denylist, TOP_NAMES };

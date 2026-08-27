@@ -231,10 +231,13 @@ export function actionableAdvisories(advisories, latestPublished) {
  * checked as given, an unpinned install is checked against whatever latest
  * resolves to right now.
  */
-export async function advisoryNotes(packages, timeoutMs = 2000, now = Date.now()) {
+export async function advisoryNotes(packages, timeoutMs = 2000, now = Date.now(), limit = 4) {
   const notes = [];
 
-  for (const pkg of packages.slice(0, 4)) {
+  // Four is right for a command line, where nobody installs more than a handful
+  // at once. A manifest declares more than that and asks for a higher limit,
+  // because stopping at four there would quietly skip the pin that mattered.
+  for (const pkg of packages.slice(0, limit)) {
     const info = await queryRegistry(pkg.name, timeoutMs, now);
     if (!info?.latest) continue;
 

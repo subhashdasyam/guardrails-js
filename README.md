@@ -574,7 +574,23 @@ To change any of it, drop a `.guardrails-js.json` in your project root. Every fi
 }
 ```
 
-`allowPackages` is the only way past a [blocked install](#-why-it-blocks-instead-of-asking). `disableRules` does not cover it, because an advisory is not a rule and has no id to name.
+`allowPackages` is the only way past a [blocked install](#-why-it-blocks-instead-of-asking), and it covers `SUPPLY-CVE` on your `package.json` too. `disableRules` does not, because an advisory is not a rule and has no id to name.
+
+### 📋 Your package.json gets checked too
+
+Pinning an old version is the quiet way to end up vulnerable, so writing a `package.json` now checks what those pins actually carry:
+
+```json
+{ "dependencies": { "lodash": "4.16.0", "minimist": "0.0.8" } }
+```
+
+Both of those are CRITICAL with a fix available, so Claude is interrupted and fixes them in the same turn. 🛑
+
+- **Exact pins only.** `^4.16.0` installs the newest 4.x, so an advisory against 4.16.0 usually does not describe what lands. Flagging ranges would fire on the most common way to declare a dependency.
+- **CRITICAL and HIGH interrupt. MODERATE and below are a note.**
+- **Up to 10 pins per write**, and it tells you when it checked fewer.
+- **`npm install` with no arguments reports, never blocks.** The manifest is already committed, so refusing to install would strand the project. The fix is an edit to `package.json`, not a different command.
+- `"network": false` turns all of it off.
 
 ### 🎚️ The four you are most likely to want
 
