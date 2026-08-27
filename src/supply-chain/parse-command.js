@@ -65,7 +65,13 @@ export function tokenize(command) {
       i += 2;
       continue;
     }
-    if (ch === ';' || ch === '|' || ch === '&' || ch === '\n') {
+    // The & in 2>&1 is a file descriptor, not the background operator.
+    // Splitting there truncates the segment, which hid every package after it:
+    // `npm install 2>&1 lodash@4.17.0` left lodash in a segment whose command
+    // was "1", so it was never examined at all.
+    const inRedirect = ch === '&' && (current.endsWith('>') || command[i + 1] === '>');
+
+    if (!inRedirect && (ch === ';' || ch === '|' || ch === '&' || ch === '\n')) {
       push();
       tokens.push(ch === '\n' ? ';' : ch);
       i += 1;
@@ -98,6 +104,42 @@ export function segments(command) {
   return out;
 }
 
+// Redirections. Anything that is not a flag used to be read as a package name,
+// so `npm install express 2>/dev/null` reported a git install of "2>/dev/null"
+// and prompted for permission on a completely clean command.
+//
+// Each pattern anchors on optional leading digits or & followed by > or <, so a
+// specifier can never match one: "lodash@>=4.17.21" starts with a letter.
+
+/** 2>&1, >&2. The descriptor is inside the token, so nothing follows it. */
+const FD_DUPLICATE = /^(\d+|&)?>&\d*-?$/;
+
+/** > >> < << <<< 2> &> >| . The next token is the target and goes with it. */
+const BARE_OPERATOR = /^(\d+|&)?(>>?\|?|<<?<?)$/;
+
+/** 2>/dev/null, >out.log. Operator and target in one token. */
+const GLUED_TARGET = /^(\d+|&)?(>>?|<<?<?)\S+$/;
+
+/** Drop redirections and their targets, leaving only real arguments. */
+export function stripRedirections(argv) {
+  const out = [];
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+
+    if (FD_DUPLICATE.test(token)) continue;
+    if (BARE_OPERATOR.test(token)) {
+      i += 1; // the target is the next token
+      continue;
+    }
+    if (GLUED_TARGET.test(token)) continue;
+
+    out.push(token);
+  }
+
+  return out;
+}
+
 const MANAGERS = new Set(['npm', 'yarn', 'pnpm', 'bun', 'npx']);
 const INSTALL_SUBCOMMANDS = new Set(['install', 'i', 'add', 'in', 'ins', 'isnt', 'isntall']);
 
@@ -108,7 +150,10 @@ const INSTALL_SUBCOMMANDS = new Set(['install', 'i', 'add', 'in', 'ins', 'isnt',
 export function findInstallCommands(command) {
   const found = [];
 
-  for (const argv of segments(command)) {
+  for (const raw of segments(command)) {
+    // Before the manager is read, so a redirection sitting ahead of npm goes too.
+    const argv = stripRedirections(raw);
+
     // Strip leading environment assignments: FOO=bar npm i x
     let start = 0;
     while (start < argv.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[start])) start += 1;

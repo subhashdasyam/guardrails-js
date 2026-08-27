@@ -121,6 +121,32 @@ test('allowPackages turns a block back into a prompt', () => {
   assert.match(stdout, new RegExp(ADVISORY), 'and still worth saying why');
 });
 
+test('a redirection cannot hide the package behind it', () => {
+  // `&` was read as the background operator inside 2>&1, which split the
+  // command and left the package in a segment whose command was "1". Nothing
+  // examined it, so a CRITICAL walked through the gate untouched.
+  const { code, stderr } = runHook(`npm install 2>&1 ${PKG}@${BAD}`);
+
+  assert.equal(code, 2, 'argument order must not decide whether the gate runs');
+  assert.match(stderr, new RegExp(ADVISORY));
+});
+
+test('a redirection on a clean install says nothing at all', () => {
+  // 2>/dev/null has a slash and no leading @, so it parsed as a git or URL
+  // install and prompted for permission on a command with nothing wrong with
+  // it. A gate that cries wolf on `npm install express 2>/dev/null` teaches
+  // people to approve without reading.
+  for (const command of [
+    'npm install express 2>/dev/null',
+    'npm install express 2>&1',
+    'npm install express > out.log',
+  ]) {
+    const { code, stdout } = runHook(command);
+    assert.equal(code, 0, `${command} should not block`);
+    assert.doesNotMatch(stdout, /permissionDecision/, `${command} should not prompt`);
+  }
+});
+
 test('network false stops the lookup, so nothing blocks on an advisory', () => {
   const { code } = runHook(`npm install ${PKG}@${BAD}`, { config: { network: false } });
 

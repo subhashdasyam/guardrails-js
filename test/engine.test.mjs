@@ -391,6 +391,44 @@ test('install command detection', () => {
   assert.deepEqual(env[0].packages, ['pm2']);
 });
 
+test('redirections are plumbing, not packages', () => {
+  // The parser knew about quotes, escapes and separators, but nothing about
+  // redirection, so every operator and every target became a package name. The
+  // hook's own output gave it away: it warned that "2>" was one or two letters
+  // away from "ab" and not on the registry.
+  //
+  // Two of these were more than noise. "2>/dev/null" contains a slash and does
+  // not start with @, so it parsed as a git or URL install, which is a high
+  // weight signal: a clean `npm install express 2>/dev/null` asked for
+  // permission. And `&` was read as the background operator inside `2>&1`,
+  // which truncated the segment and hid every package after it.
+  const packages = (command) => findInstallCommands(command).flatMap((c) => c.packages);
+
+  assert.deepEqual(packages('npm install express 2>&1'), ['express']);
+  assert.deepEqual(packages('npm install express > out.log'), ['express']);
+  assert.deepEqual(packages('npm install express 2>/dev/null'), ['express']);
+  assert.deepEqual(packages('npm install express >> build.log 2>&1'), ['express']);
+  assert.deepEqual(packages('npm install 2> err.log express'), ['express']);
+  assert.deepEqual(packages('npm install express < input.txt'), ['express']);
+
+  // The bypass. Anything after the redirection used to vanish from the gate.
+  assert.deepEqual(packages('npm install 2>&1 evil-pkg'), ['evil-pkg']);
+  assert.deepEqual(packages('npm install > log.txt evil-pkg'), ['evil-pkg']);
+  assert.deepEqual(packages('npm install express 2>&1 lodash@4.17.0'), [
+    'express',
+    'lodash@4.17.0',
+  ]);
+
+  // The boundary worth guarding: a range specifier contains > and must survive.
+  assert.deepEqual(packages('npm install "lodash@>=4.17.21"'), ['lodash@>=4.17.21']);
+
+  // A bare & is still the background operator, so this is still two commands.
+  assert.deepEqual(segments('npm i x & npm i y'), [
+    ['npm', 'i', 'x'],
+    ['npm', 'i', 'y'],
+  ]);
+});
+
 test('specifier parsing', () => {
   assert.deepEqual(parseSpecifier('lodash'), { name: 'lodash', version: null, kind: 'registry' });
   assert.deepEqual(parseSpecifier('lodash@4.17.21'), {

@@ -422,7 +422,8 @@ function tokenize(command) {
       i += 2;
       continue;
     }
-    if (ch === ";" || ch === "|" || ch === "&" || ch === "\n") {
+    const inRedirect = ch === "&" && (current.endsWith(">") || command[i + 1] === ">");
+    if (!inRedirect && (ch === ";" || ch === "|" || ch === "&" || ch === "\n")) {
       push();
       tokens.push(ch === "\n" ? ";" : ch);
       i += 1;
@@ -448,11 +449,29 @@ function segments(command) {
   if (current.length > 0) out.push(current);
   return out;
 }
+var FD_DUPLICATE = /^(\d+|&)?>&\d*-?$/;
+var BARE_OPERATOR = /^(\d+|&)?(>>?\|?|<<?<?)$/;
+var GLUED_TARGET = /^(\d+|&)?(>>?|<<?<?)\S+$/;
+function stripRedirections(argv) {
+  const out = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (FD_DUPLICATE.test(token)) continue;
+    if (BARE_OPERATOR.test(token)) {
+      i += 1;
+      continue;
+    }
+    if (GLUED_TARGET.test(token)) continue;
+    out.push(token);
+  }
+  return out;
+}
 var MANAGERS = /* @__PURE__ */ new Set(["npm", "yarn", "pnpm", "bun", "npx"]);
 var INSTALL_SUBCOMMANDS = /* @__PURE__ */ new Set(["install", "i", "add", "in", "ins", "isnt", "isntall"]);
 function findInstallCommands(command) {
   const found = [];
-  for (const argv of segments(command)) {
+  for (const raw of segments(command)) {
+    const argv = stripRedirections(raw);
     let start = 0;
     while (start < argv.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[start])) start += 1;
     if (start >= argv.length) continue;
