@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { readHookInput, emitAdditionalContext, emitLoud, readPackageJson, relativeTo } from './util.js';
+import { readHookInput, emitAdditionalContext, emitLoud, readPackageJson, relativeTo, queueHookNotice } from './util.js';
 import { SUPPORTED_EXTENSIONS } from '../engine/parse.js';
 import { loadConfig, isExcluded } from '../engine/config.js';
 import { analyze } from '../engine/analyze.js';
@@ -20,6 +20,7 @@ import {
 } from '../supply-chain/dependencies.js';
 import { runManifestRules, isManifestFile } from '../engine/manifest.js';
 import { RULES } from '../rules/index.js';
+import { maintainThreatData } from '../threat/maintenance.js';
 
 const WATCHED_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
@@ -47,7 +48,7 @@ async function checkManifest(filePath, input) {
   }
 
   // Supply chain rules first: they are about the project, not a version range.
-  const findings = runManifestRules(projectRoot, config, pkg);
+  const findings = await runManifestRules(projectRoot, config, pkg);
 
   const locked = readLockedVersions(projectRoot);
   const matches = checkDependencies(pkg ?? manifestPackage(projectRoot), locked);
@@ -132,6 +133,8 @@ function filePathFrom(toolInput) {
 
 export async function main() {
   const input = readHookInput();
+  const threatNotice = maintainThreatData(loadConfig(input.cwd || process.cwd()));
+  queueHookNotice('PostToolUse', threatNotice);
 
   const toolName = input.tool_name;
   if (!WATCHED_TOOLS.has(toolName)) return;

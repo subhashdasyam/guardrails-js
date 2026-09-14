@@ -3,8 +3,8 @@
 // The output lives in dist/ and is committed. Claude Code installs plugins by
 // cloning, and its npm install step is best effort: it is skipped when a yarn
 // or pnpm lockfile is present and a failure does not stop the plugin loading.
-// A security tool cannot depend on that. Shipping zero runtime dependencies
-// also means this plugin has no supply chain of its own.
+// Code analysis cannot depend on that. Modern Node supplies SQLite directly;
+// older Node installs its compatibility driver in the separate data directory.
 
 import { build } from 'esbuild';
 import fs from 'node:fs';
@@ -18,6 +18,7 @@ const ENTRIES = [
   ['src/hooks/post-write.js', 'dist/post-write.mjs'],
   ['src/hooks/pre-bash.js', 'dist/pre-bash.mjs'],
   ['src/hooks/audit.js', 'dist/audit.mjs'],
+  ['src/threat/cli.js', 'dist/threat-data.mjs'],
 ];
 
 const banner = `// Built by scripts/build.mjs. Do not edit. Source lives in src/.\n`;
@@ -35,7 +36,8 @@ async function run() {
       format: 'esm',
       minify: false,
       legalComments: 'none',
-      banner: { js: banner },
+      external: ['node:sqlite'],
+      banner: { js: banner + (output === 'dist/threat-data.mjs' ? "import { createRequire as bundledRequire } from 'node:module';\nconst require = bundledRequire(import.meta.url);\n" : '') },
       loader: { '.json': 'json' },
       logLevel: 'warning',
     });

@@ -9,11 +9,13 @@ import {
   emitAdditionalContext,
   emitLoud,
   readPackageJson,
+  queueHookNotice,
 } from './util.js';
 import { loadConfig } from '../engine/config.js';
 import { findInstallCommands, riskyShellPatterns } from '../supply-chain/parse-command.js';
 import { allows, evaluateInstall, knownPackageNames } from '../supply-chain/signals.js';
 import { BLOCKING_SEVERITIES } from '../supply-chain/osv.js';
+import { maintainThreatData } from '../threat/maintenance.js';
 
 /** A named severity with a reachable fix, that the project has not allowed. */
 function blocks(note, config) {
@@ -35,6 +37,8 @@ function ask(reason) {
 
 export async function main() {
   const input = readHookInput();
+  const threatNotice = maintainThreatData(loadConfig(input.cwd || process.cwd()));
+  queueHookNotice('PreToolUse', threatNotice);
   if (input.tool_name !== 'Bash') return;
 
   const command = input.tool_input?.command;
@@ -104,7 +108,7 @@ export async function main() {
 
   for (const install of installs) {
     if (install.subcommand === 'ci') continue;
-    const verdict = evaluateInstall(install, {
+    const verdict = await evaluateInstall(install, {
       projectRoot,
       known,
       allowPackages: config.allowPackages,

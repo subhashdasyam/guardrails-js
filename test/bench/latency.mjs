@@ -109,7 +109,25 @@ const skipped = measure('notes.md');
 const clean = measure('clean.js');
 const hit = measure('hit.js');
 
+// Package checks open an indexed SQLite snapshot. Include the full published
+// dataset in CI via GUARDRAILS_THREAT_SNAPSHOT; ordinary writes still skip it.
+const { lookupThreats } = await import('../../src/threat/store.js');
+const queries = [];
+for (let i = 0; i < WARMUP + RUNS; i++) {
+  const start = process.hrtime.bigint();
+  const records = await lookupThreats(['chalk', 'react', 'guardrails-benchmark-not-a-package']);
+  if (records.unavailable || !records.has('chalk')) throw new Error(records.unavailable || 'Threat database lookup failed');
+  if (i >= WARMUP) queries.push(Number(process.hrtime.bigint() - start) / 1e6);
+}
+queries.sort((a, b) => a - b);
+
 const results = [
+  {
+    name: 'threat DB',
+    detail: 'open SQLite, query three names by index, and close',
+    value: queries[Math.floor(queries.length / 2)],
+    budget: 100,
+  },
   {
     name: 'load',
     detail: 'bundle load, over a bare node process',
@@ -152,7 +170,7 @@ for (const result of results) {
 
 if (failed) {
   console.log(
-    '\nThis measures the plugin, not the machine, so a slower runner is not the cause.',
+    '\nThese baseline-adjusted medians reduce runner noise; reproduce a failure before attributing its cause.',
   );
   console.log('Something in the hook path got more expensive. Likely candidates:');
   console.log('  - a rule with no prefilter, which forces every file to be parsed');

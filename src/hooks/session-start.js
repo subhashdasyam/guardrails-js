@@ -9,6 +9,7 @@ import { readHookInput, readPackageJson, allDependencies } from './util.js';
 import { loadConfig } from '../engine/config.js';
 import { packsFor, stackLabel } from '../priming/packs.js';
 import { resetSession } from '../engine/fingerprint.js';
+import { maintainThreatData } from '../threat/maintenance.js';
 import { runManifestRules } from '../engine/manifest.js';
 import {
   readLockedVersions,
@@ -22,7 +23,7 @@ async function baselineNotes(projectRoot, pkg, config) {
   // The supply chain rules cover the lockfile, install scripts, known bad
   // releases, and signature verification, so this is one implementation rather
   // than a second set of checks that can drift from the first.
-  for (const finding of runManifestRules(projectRoot, config, pkg)) {
+  for (const finding of await runManifestRules(projectRoot, config, pkg)) {
     notes.push(`${finding.ruleId} ${finding.message} Fix: ${finding.fix.split('\n')[0]}`);
   }
 
@@ -60,6 +61,8 @@ export async function main() {
   resetSession(input.session_id);
 
   const config = loadConfig(cwd);
+  const threatNotice = maintainThreatData(config);
+  if (threatNotice) process.stdout.write(`${threatNotice}\n\n`);
   if (!config.priming) return;
 
   const { pkg, root } = readPackageJson(cwd);

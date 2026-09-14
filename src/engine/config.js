@@ -29,6 +29,8 @@ const DEFAULTS = {
     '**/*.min.js',
   ],
   network: true,
+  threatDataAutoRefresh: true,
+  threatDataRefreshHours: 24,
   primingPacks: ['auto'],
   priming: true,
   // Security findings below this are dropped. Performance findings are not on

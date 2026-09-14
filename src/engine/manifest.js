@@ -11,6 +11,7 @@ import path from 'node:path';
 import supplyRules from '../rules/supply/manifest.js';
 import { readLockedVersions } from '../supply-chain/dependencies.js';
 import { shouldReport } from './config.js';
+import { lookupThreats } from '../threat/store.js';
 
 const LOCKFILES = ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb'];
 
@@ -78,11 +79,14 @@ export function manifestContext(projectRoot, pkg = null) {
  * Run the supply chain rules over a project. Returns findings in the same shape
  * everything else produces.
  */
-export function runManifestRules(projectRoot, config, pkg = null, rules = supplyRules) {
+export async function runManifestRules(projectRoot, config, pkg = null, rules = supplyRules) {
   const ctx = manifestContext(projectRoot, pkg);
 
   // Not a JavaScript project. Nothing to say.
   if (!ctx.pkg) return [];
+  if (!config.isRuleDisabled('SUPPLY-DENY')) {
+    ctx.threats = await lookupThreats([...ctx.locked.keys(), ...Object.keys(ctx.pkg.dependencies || {}), ...Object.keys(ctx.pkg.devDependencies || {})]);
+  }
 
   const findings = [];
 

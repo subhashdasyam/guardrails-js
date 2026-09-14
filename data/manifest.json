@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "source": "bundled curated baseline",
+  "sourceUpdated": "2026-08-23",
+  "builtAt": "2026-09-14T08:01:52.526Z",
+  "seedOnly": true,
+  "scanned": 0,
+  "packages": 30,
+  "records": 30,
+  "sha256": "b51f07e95406262df0046d1160184cf7fce44e0b2c577302848cb8446782b54d",
+  "bytes": 106496
+}

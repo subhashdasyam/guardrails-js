@@ -25,7 +25,21 @@ export function toolResultOf(input) {
   return input.tool_response ?? input.tool_result ?? null;
 }
 
+let pendingNotice = null;
+export function queueHookNotice(event, text) {
+  if (!text) return;
+  pendingNotice = { event, text };
+  process.once('beforeExit', () => {
+    if (pendingNotice) emitAdditionalContext(pendingNotice.event, '');
+  });
+}
+
 export function emitJson(payload) {
+  if (pendingNotice) {
+    payload.hookSpecificOutput ||= { hookEventName: pendingNotice.event };
+    payload.hookSpecificOutput.additionalContext = [pendingNotice.text, payload.hookSpecificOutput.additionalContext].filter(Boolean).join('\n\n');
+    pendingNotice = null;
+  }
   process.stdout.write(`${JSON.stringify(payload)}\n`);
 }
 
@@ -40,6 +54,7 @@ export function emitAdditionalContext(eventName, text) {
 
 /** Exit 2 with the message on stderr. This is how a hook talks to Claude. */
 export function emitLoud(text) {
+  if (pendingNotice) { text += `\n\n${pendingNotice.text}`; pendingNotice = null; }
   process.stderr.write(`${text}\n`);
   process.exit(2);
 }

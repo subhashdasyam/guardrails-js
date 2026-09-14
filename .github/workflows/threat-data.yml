@@ -1,64 +1,50 @@
 name: threat-data
 
-# Refreshes the offline denylist and the popular package list, then opens a pull
-# request. Nothing is fetched at hook time on purpose: a security tool that
-# downloads its own rules at runtime is a remote code path into the thing meant
-# to protect you.
-
 on:
   schedule:
-    - cron: '17 4 * * 1'
+    - cron: '17 4 * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/threat/**'
+      - 'src/supply-chain/data/**'
+      - 'scripts/refresh-threat-data.mjs'
+      - 'scripts/publish-threat-data.mjs'
+      - '.github/workflows/threat-data.yml'
 
 permissions:
   contents: write
-  pull-requests: write
+
+concurrency:
+  group: threat-data-publication
+  cancel-in-progress: false
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm
-
       - run: npm ci --ignore-scripts
-
-      - name: Fetch the OSV npm feed
+      - run: npm run build
+      - name: Import current OSV and npm feeds into SQLite
+        run: node scripts/refresh-threat-data.mjs --output threat-output
+      - name: Validate source freshness, integrity, and both drivers
         run: |
-          curl -fsSL -o npm-osv.zip https://osv-vulnerabilities.storage.googleapis.com/npm/all.zip
-          mkdir -p osv-npm
-          unzip -q npm-osv.zip -d osv-npm
-          ls osv-npm | wc -l
-
-      - name: Rebuild threat data
-        run: node scripts/refresh-threat-data.mjs --osv-dir osv-npm
-
-      - name: Rebuild the bundle
-        run: npm run build
-
-      - name: Tests still pass
-        run: npm test
-
-      - name: Tidy up
-        run: rm -rf osv-npm npm-osv.zip
-
-      - name: Open a pull request
-        uses: peter-evans/create-pull-request@v8
-        with:
-          branch: threat-data-refresh
-          title: 'Refresh npm threat data'
-          commit-message: 'Refresh npm denylist and popular package list'
-          body: |
-            Automated refresh of the offline supply chain data.
-
-            Sources: the OSV npm feed for malicious package advisories, and the
-            npm registry search API for popular package names.
-
-            Check the denylist diff before merging. Entries are only ever added
-            by this job, never removed.
-          delete-branch: true
+          node scripts/refresh-threat-data.mjs --validate --output threat-output
+          npm test
+          GUARDRAILS_SQLITE_DRIVER=sqlite3 node dist/threat-data.mjs setup
+          GUARDRAILS_SQLITE_DRIVER=sqlite3 node scripts/refresh-threat-data.mjs --validate --output threat-output
+      - name: Check hook latency with the full database
+        env:
+          GUARDRAILS_THREAT_SNAPSHOT: ${{ github.workspace }}/threat-output
+        run: npm run bench
+      - name: Publish validated database to threat-data branch
+        run: node scripts/publish-threat-data.mjs threat-output
+      - name: Data summary
+        run: cat threat-output/summary.md >> "$GITHUB_STEP_SUMMARY"

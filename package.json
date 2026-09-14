@@ -1,6 +1,6 @@
 {
   "name": "guardrails-js",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "private": true,
   "type": "module",
   "description": "Claude Code plugin that tells Claude when the JavaScript it wrote is unsafe or slow",
@@ -11,18 +11,22 @@
     "url": "https://github.com/subhashdasyam/guardrails-js.git"
   },
   "engines": {
-    "node": ">=20.10.0"
+    "node": ">=20.17.0"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test test/*.test.mjs",
+    "test": "node --import ./test/setup.mjs --test test/*.test.mjs",
     "test:rules": "node --test test/rules.test.mjs",
     "check:dist": "node scripts/check-dist.mjs",
-    "bench": "node test/bench/latency.mjs"
+    "bench": "node --import ./test/setup.mjs test/bench/latency.mjs",
+    "threat:status": "node dist/threat-data.mjs status",
+    "threat:refresh": "node dist/threat-data.mjs refresh --force"
   },
   "devDependencies": {
     "@babel/parser": "^7.26.3",
     "@vue/compiler-dom": "^3.5.41",
-    "esbuild": "^0.24.2"
+    "esbuild": "^0.24.2",
+    "semver": "7.8.5",
+    "yauzl": "3.4.0"
   }
 }

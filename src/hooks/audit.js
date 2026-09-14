@@ -93,7 +93,7 @@ function* walkFiles(dir, limit, seen = { count: 0 }) {
   }
 }
 
-export function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
 
   if (args.help) {
@@ -146,7 +146,7 @@ export function main(argv = process.argv.slice(2)) {
   // Neither the project level supply chain rules nor dependency ranges are
   // visible in source, so both get their own pass.
   if (pkg) {
-    all.push(...runManifestRules(projectRoot, config, pkg));
+    all.push(...await runManifestRules(projectRoot, config, pkg));
 
     const locked = readLockedVersions(projectRoot);
     for (const match of checkDependencies(pkg, locked)) {

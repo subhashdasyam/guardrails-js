@@ -16,7 +16,13 @@ command -v node 2>/dev/null || where node 2>/dev/null || echo "not on PATH"
 node "${CLAUDE_PLUGIN_ROOT}/dist/audit.mjs" --help >/dev/null 2>&1 && echo "hooks can run" || echo "hooks cannot run"
 ```
 
-If `node --version` printed a version and the hooks can run, say so with the version and path, and stop. Nothing is wrong.
+If Node and the hooks work, also run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/dist/threat-data.mjs" status
+```
+
+Recommend Node 22.13+ for built-in SQLite. Node 20.17+ is supported through a locally installed `sqlite3` driver. If that backend is unavailable, run `node "${CLAUDE_PLUGIN_ROOT}/dist/threat-data.mjs" setup` (requires network access), then check status again. Report data age and failed refresh routes. For data older than seven days, use `/guardrails-js:threat-data` for automatic retry or manual clone/import instructions. Do not describe unavailable database checks as healthy.
 
 If node was not found, continue.
 

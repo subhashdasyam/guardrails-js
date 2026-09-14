@@ -10,7 +10,7 @@
 //
 //   { projectRoot, pkg, locked, npmrc, hasLockfile, lockfileName, read }
 
-import denylist from '../../supply-chain/data/denylist.json' with { type: 'json' };
+import { affectedBy } from '../../threat/store.js';
 
 const CI_INSTALL = /\bnpm\s+install\b|\bnpm\s+i\b(?!\w)/;
 
@@ -97,10 +97,9 @@ export const SUPPLY_DENY = {
     const hits = [];
 
     for (const [name, version] of ctx.locked) {
-      const entry = denylist.packages[name];
+      const entry = ctx.threats?.get(name)?.find(record => affectedBy(record, version));
       if (!entry) continue;
-      if (!entry.versions.includes(version)) continue;
-      hits.push({ name, version, incident: denylist.incidents[entry.incident] });
+      hits.push({ name, version, incident: entry });
     }
 
     // A manifest pinned to a bad exact version counts even with no lockfile.
@@ -109,11 +108,11 @@ export const SUPPLY_DENY = {
       ...(ctx.pkg?.devDependencies ?? {}),
     })) {
       if (ctx.locked.has(name)) continue;
-      const entry = denylist.packages[name];
-      if (!entry) continue;
       const exact = /^\d+\.\d+\.\d+$/.test(String(range).trim()) ? String(range).trim() : null;
-      if (!exact || !entry.versions.includes(exact)) continue;
-      hits.push({ name, version: exact, incident: denylist.incidents[entry.incident] });
+      if (!exact) continue;
+      const entry = ctx.threats?.get(name)?.find(record => affectedBy(record, exact));
+      if (!entry) continue;
+      hits.push({ name, version: exact, incident: entry });
     }
 
     if (hits.length === 0) return null;

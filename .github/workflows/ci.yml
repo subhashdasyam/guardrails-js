@@ -31,6 +31,9 @@ jobs:
       - name: Install
         run: npm ci --ignore-scripts
 
+      - name: Set up SQLite compatibility driver when needed
+        run: node dist/threat-data.mjs setup
+
       - name: Rule and engine tests
         run: npm test
 
@@ -61,4 +64,4 @@ jobs:
       - run: npm run build
 
       - name: Hook contract
-        run: node test/hooks.contract.mjs
+        run: node --import ./test/setup.mjs test/hooks.contract.mjs

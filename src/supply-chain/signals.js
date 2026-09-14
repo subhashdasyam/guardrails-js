@@ -7,12 +7,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { allows } from './allow.js';
-import denylist from './data/denylist.json' with { type: 'json' };
 import topPackages from './data/top-packages.json' with { type: 'json' };
 import { parseSpecifier } from './parse-command.js';
+import { lookupThreats, affectedBy, popularNames } from '../threat/store.js';
 
 const TOP_NAMES = new Set(topPackages.names);
-const SUSPICIOUS = new Set(denylist.suspiciousNames);
+const SUSPICIOUS = new Set(['crossenv', 'cross-env.js', 'd3.js', 'fabric-js', 'ffmepg', 'gruntcli', 'http-proxy.js', 'jquery.js', 'mariadb', 'mongose', 'mssql.js', 'mssql-node', 'mysqljs', 'node-fabric', 'node-opencv', 'node-opensl', 'node-openssl', 'node-sqlite', 'node-tkinter', 'nodecaffe', 'nodefabric', 'nodeffmpeg', 'nodemailer-js', 'nodemailer.js', 'nodemssql', 'noderequest', 'nodesass', 'nodesqlite', 'opencv.js', 'openssl.js', 'proxy.js', 'shadowsock', 'smb', 'sqlite.js', 'sqliter', 'sqlserver', 'tkinter']);
+let popularLoaded = false;
 
 /** Levenshtein distance, capped so we bail out early on obvious misses. */
 export function editDistance(a, b, cap = 3) {
@@ -139,7 +140,7 @@ function versionIsPinned(version) {
  * Score one install command. Returns { prompt, reasons, packages } where
  * reasons is a list of plain sentences that go straight into the prompt text.
  */
-export function evaluateInstall(install, context) {
+export async function evaluateInstall(install, context) {
   const { projectRoot } = context;
   const known = context.known ?? knownPackageNames(projectRoot);
 
@@ -148,6 +149,13 @@ export function evaluateInstall(install, context) {
   let weightHigh = 0;
   let weightLow = 0;
   let block = false;
+  const threats = await lookupThreats(install.packages.map(spec => parseSpecifier(spec).name));
+  if (!popularLoaded) {
+    const names = await popularNames();
+    if (names) for (const name of names) TOP_NAMES.add(name);
+    popularLoaded = true;
+  }
+  if (threats.unavailable) reasons.push(`Threat database checks unavailable: ${threats.unavailable}`);
 
   const ignoresScripts = install.flags.some(
     (flag) => flag === '--ignore-scripts' || flag.startsWith('--ignore-scripts='),
@@ -166,12 +174,11 @@ export function evaluateInstall(install, context) {
       continue;
     }
 
-    const entry = denylist.packages[lower];
+    const entry = threats.get(lower)?.find(record => affectedBy(record, parsed.version));
     if (entry) {
-      if (!parsed.version || entry.versions.includes(parsed.version)) {
-        const incident = denylist.incidents[entry.incident];
+      {
         reasons.push(
-          `${lower} has known compromised releases (${entry.versions.join(', ')}): ${incident?.description ?? 'known bad release'}`,
+          `${lower} has known compromised releases (${entry.versions.join(', ') || 'see advisory ranges'}): ${entry.description ?? 'known bad release'} (${entry.id})`,
         );
         weightHigh += 1;
         // Shipped malware. There is no version of this worth prompting about,
@@ -252,4 +259,4 @@ export function evaluateInstall(install, context) {
   };
 }
 
-export { allows, denylist, TOP_NAMES };
+export { allows, TOP_NAMES };
