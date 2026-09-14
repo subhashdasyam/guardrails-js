@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="assets/images/guardrails-js-hero.jpg" alt="guardrails-js" width="820">
+  <a href="assets/images/guardrails-js-brand-hero.png">
+    <img src="assets/images/guardrails-js-brand-hero.png" alt="guardrails-js: Claude writes. Guardrails checks. A JavaScript security plugin for Claude Code." width="820">
+  </a>
 </p>
 
 <h1 align="center">🛡️ guardrails-js</h1>
@@ -53,6 +55,12 @@ Because it agrees with you and then does it anyway on the next file.
 This does not ask nicely. It parses what was actually written, tracks where request data flows, and reports what it finds. **87 rules**, each mapped to [OWASP Top 10:2025](https://owasp.org/Top10/2025/) and CWE.
 
 Three hooks do the work:
+
+<p align="center">
+  <a href="assets/images/guardrails-js-three-hooks.png">
+    <img src="assets/images/guardrails-js-three-hooks.png" alt="Three hooks: read the project at session start, scan files in the background after Claude writes them, and check packages before an install." width="820">
+  </a>
+</p>
 
 🌱 **Session start.** Reads your `package.json`, works out your stack, and hands Claude a short rule set for that stack only. A Vue project never gets React rules. It also flags what is already broken: a missing lockfile, a known compromised dependency.
 
@@ -661,6 +669,12 @@ Cost: one fast-model call per file write. Leave it off unless you are working on
 
 ## Daily SQLite threat data
 
+<p align="center">
+  <a href="assets/images/guardrails-js-threat-database.png">
+    <img src="assets/images/guardrails-js-threat-database.png" alt="The plugin files keep a small database of 30 starter packages. A separate plugin data folder holds the full threat database used after a valid update. Package checks look up names and affected versions." width="820">
+  </a>
+</p>
+
 ### What is in the database?
 
 `threat-data.db` is a SQLite file. It stores known malicious npm package names, affected versions, threat reports, and popular package names used to spot likely spelling tricks. It does not contain the packages themselves and does not install or run them.
@@ -679,6 +693,12 @@ The bundled file stays at 30 packages even after a full download. Check the **ac
 Package checks look up names through a SQLite index instead of loading a huge JavaScript data file. Ordinary code writes do not open the database. The full feed is not packed into the hook scripts. Online OSV checks for other known security issues are separate from this local malware database.
 
 ### When does it download?
+
+<p align="center">
+  <a href="assets/images/guardrails-js-threat-refresh.png">
+    <img src="assets/images/guardrails-js-threat-refresh.png" alt="A plugin hook starts a due background update. Try GitHub download, then Git clone, then a build from OSV and npm. Check the data before switching copies, remember failed methods, and warn once daily if the source is over seven days old." width="820">
+  </a>
+</p>
 
 The defaults are `network: true`, `threatDataAutoRefresh: true`, and `threatDataRefreshHours: 24`.
 
