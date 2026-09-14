@@ -12,8 +12,7 @@
   <a href="https://github.com/subhashdasyam/guardrails-js/actions/workflows/ci.yml"><img src="https://github.com/subhashdasyam/guardrails-js/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <img src="https://img.shields.io/badge/node-22.13%2B_recommended-brightgreen" alt="Node 22.13+ recommended; Node 20.17+ supported">
   <img src="https://img.shields.io/badge/rules-87-blue" alt="rules">
-  <img src="https://img.shields.io/badge/runtime%20deps-0-blue" alt="runtime deps">
-  <img src="https://img.shields.io/badge/python-none-blue" alt="python">
+  <img src="https://img.shields.io/badge/threat%20data-SQLite-blue" alt="SQLite threat database">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
 </p>
 
@@ -60,6 +59,8 @@ Three hooks do the work:
 🔍 **After every file write.** A regex pass runs first. Nothing matches, the hook exits having done almost no work. Something matches, it parses the file properly and tracks the taint. Critical and high findings go back loud so Claude rewrites them. Everything else arrives as a quiet note. The scan runs in the background and never makes Claude wait.
 
 🚧 **Before every `npm install`.** Checks the name against a known-bad list, measures how close it is to a popular package, looks at whether it is already in your lockfile, and asks osv.dev whether that exact version has a published problem.
+
+These hooks also start a [background threat-data update](#daily-sqlite-threat-data) when one is due. By default, a successful check is followed by another check after 24 hours, the next time a hook runs.
 
 ---
 
@@ -129,7 +130,7 @@ Exiting 2 is documented to stop the call **before** permission rules are read, s
 | Typosquat, unpinned, unknown name, no lockfile | ❓ Prompt |
 | Everything else worth a word | 💬 Note to Claude |
 
-Blocking only ever fires when there is somewhere to upgrade to, so Claude reads the reason and installs the fixed version in the same turn, which is the whole point.
+An online advisory only blocks when a fixed version is published. A known malicious package or release in the local threat database can still be blocked without a fixed version.
 
 Need a version anyway? That is the one way past:
 
@@ -144,12 +145,12 @@ A bare name covers every version of it. An exact pin covers only that one. Allow
 | | |
 |---|---|
 | When it runs | Only on installs pinned to an exact version, or when a prompt was already going to appear |
-| Cost | About 800 ms, once, then cached |
-| Timeout | 2 seconds, and a failure falls back to the offline verdict without a word |
-| Privacy | Package names go to `api.osv.dev` and `registry.npmjs.org`. Nothing else leaves your machine, ever |
+| Cost | Depends on the network; results are cached |
+| Timeout | Each request has a 2-second limit. Failed requests leave the offline result in place |
+| Privacy | Package names and versions go to `api.osv.dev` and `registry.npmjs.org`, not your source files |
 | Off switch | `"network": false` in `.guardrails-js.json`. The offline checks keep working |
 
-Fourteen tests cover it, all against a stubbed fetch, so they need no network and cannot quietly pass by timing out. 🧪
+Tests use fake network replies, so they need no network and cannot quietly pass by timing out. 🧪
 
 ---
 
@@ -160,9 +161,18 @@ Fourteen tests cover it, all against a stubbed fetch, so they need no network an
 /plugin install guardrails-js@guardrails-js
 ```
 
-That is the whole setup. **It asks you nothing**, and the defaults are the shipped behaviour. The parser is bundled into `dist/`. Node 22.13+ uses built-in SQLite without installing dependencies. Node 20.17+ automatically installs a pinned native `sqlite3` driver in the plugin data directory in the background; it needs npm and network access, and may need compiler tools if a prebuilt binary is unavailable. Until setup succeeds, database checks are reported as unavailable; code analysis remains available.
+Start a new Claude Code session after installing. The first hook starts the threat-data update in the background. Installing the plugin alone does not download the full database.
 
-**Recommended: Node 22.13 or later. Compatibility minimum: Node 20.17.** Tested on 20, 22, 24, and 26. SQLite capability is detected automatically, including older Node 22 installations without unflagged SQLite. The compatibility package is pinned to `sqlite3@6.0.1`; its upstream project is archived, so upgrading to Node with built-in SQLite is preferred.
+**Use Node 22.13 or later if possible. The minimum supported version is Node 20.17.** Tests run on Node 20, 22, 24, and 26.
+
+| Node setup | How SQLite works |
+|---|---|
+| Node 22.13+ with built-in SQLite | Uses `node:sqlite`. No extra SQLite package is needed |
+| Node 20.17+, or a Node build without usable built-in SQLite | Installs `sqlite3@6.0.1` in the plugin data folder, not your project |
+
+The plugin detects which one to use. Both use the same database and checks. There are no separate data shards for Node 20.
+
+The extra driver needs npm and network access. If no ready-made binary is available, its build may also need Python and C++ build tools. Setup runs in the background by default. Until it works, database checks are marked as unavailable, but code scans still work. Using Node with built-in SQLite avoids this extra setup.
 
 Run `/hooks` to confirm. Three entries should appear under Plugin Hooks.
 
@@ -176,6 +186,8 @@ claude plugin update guardrails-js@guardrails-js
 ```
 
 Restart Claude Code to load the update.
+
+These commands update the **plugin code**. Threat data has its own daily background update, which is on by default and does not need a new plugin release.
 
 Automatic updates are controlled per marketplace. Third-party marketplaces start with automatic updates off. To turn them on:
 
@@ -304,7 +316,7 @@ node --version
 command -v node
 ```
 
-If you downloaded an official Linux archive instead, add the archive's extracted `bin` directory to `PATH`. Do not source `~/.nvm/nvm.sh` unless you actually installed `nvm`. If you use your distribution's Node package, check the version because older distributions may ship a release below 20.10.
+If you downloaded an official Linux archive instead, add the archive's extracted `bin` directory to `PATH`. Do not source `~/.nvm/nvm.sh` unless you actually installed `nvm`. If you use your distribution's Node package, check the version because older distributions may ship a release below 20.17.
 
 WSL follows these Linux instructions.
 
@@ -333,13 +345,14 @@ Then run `/hooks` inside Claude Code. You should see SessionStart, PostToolUse, 
 
 ---
 
-## 🧭 Three commands
+## 🧭 Commands
 
 | Command | What it does |
 |---|---|
 | `/guardrails-js:audit [path]` | Scan the whole repository, not just what Claude touched |
 | `/guardrails-js:report` | Summarise what has been flagged this session |
 | `/guardrails-js:doctor` | Check the hooks can actually run, and say how to fix it if not |
+| `/guardrails-js:threat-data` | Show the active threat database, its age, and update errors. Ask it to refresh if you want an update now |
 
 And a CLI, for CI:
 
@@ -553,7 +566,7 @@ Rules that would need to reason across functions to be certain, such as IDOR-01,
 | `performance` | `"high"` | Performance findings. `"high"`, `"all"`, or `false` |
 | `network` | `true` | Enable online package checks, threat-data downloads, and automatic SQLite3 driver installation |
 | `threatDataAutoRefresh` | `true` | Refresh threat data in the background while the plugin is used |
-| `threatDataRefreshHours` | `24` | Interval after a successful update check (minimum one hour); failures use per-route backoff |
+| `threatDataRefreshHours` | `24` | Hours between successful update checks, with a minimum of one hour. Failed methods wait before trying again |
 | `report` | `true` | Append findings to `.claude/guardrails-js-report.md` |
 | `priming` | `true` | Send Claude a rule set for your stack at session start |
 | `disableRules` | `[]` | Rule ids to switch off entirely |
@@ -593,7 +606,7 @@ Both of those are CRITICAL with a fix available, so Claude is interrupted and fi
 - **Up to 10 pins per write**, and it tells you when it checked fewer.
 - **`npm install` with no arguments reports, never blocks.** The manifest is already committed, so refusing to install would strand the project. The fix is an edit to `package.json`, not a different command.
 - **It also runs when a session opens**, so a repo whose `package.json` was written weeks ago still gets checked. Nobody has to touch the file.
-- `"network": false` turns all of it off.
+- `"network": false` turns these online advisory checks off. Local threat-database checks still run if SQLite is ready.
 
 ### 🎚️ The four you are most likely to want
 
@@ -648,33 +661,113 @@ Cost: one fast-model call per file write. Leave it off unless you are working on
 
 ## Daily SQLite threat data
 
-Package checks query an indexed `threat-data.db` on demand. Ordinary code writes do not open the database. A small curated SQLite baseline ships with the plugin, so an initial download is not required when SQLite is available; full feed coverage arrives through updates. Threat data is never embedded into the hook bundles.
+### What is in the database?
 
-With the defaults `network: true`, `threatDataAutoRefresh: true`, and `threatDataRefreshHours: 24`, hooks check whether maintenance is due and launch a detached background worker. There is no OS scheduler: updates happen while the plugin is used, including during long sessions. The active snapshot stays available throughout an update.
+`threat-data.db` is a SQLite file. It stores known malicious npm package names, affected versions, threat reports, and popular package names used to spot likely spelling tricks. It does not contain the packages themselves and does not install or run them.
 
-The worker tries direct download from this repository's `threat-data` branch, then a shallow Git clone of that branch, then a local SQLite build from the original OSV/npm feeds. Failed routes are remembered across sessions: temporary failures back off for hours, explicit blocking and repeated failures for seven days. A working fallback is reused while earlier routes are in backoff. `refresh --force` resets that backoff. An unchanged manifest avoids downloading the database again. npm popularity rate limiting retains baseline names and records a warning without preventing an OSV update.
+There are two copies to know about:
 
-GitHub Actions builds and validates the full snapshot daily and publishes only the database, manifest, and summary to the data branch. Runtime downloads contain data, not executable plugin updates. Checksums detect incomplete or inconsistent transfers; they do not authenticate an independently compromised publisher. Snapshots are validated and activated through an atomic pointer, preserving the previous file for concurrent readers.
+| Copy | What it is for |
+|---|---|
+| Small database shipped in the plugin's `data/` folder | A hand-picked starting set of 30 packages. It works before a download, as long as SQLite is ready |
+| Full database saved in the plugin data folder | The downloaded data used after a successful update. It takes the place of the starting set for checks |
 
-State lives under `${CLAUDE_PLUGIN_DATA}/threat`, or `~/.claude/plugins/data/guardrails-js/threat` when that variable is absent. Source age comes from the source snapshot timestamp, not the download time. Data older than seven days triggers a hook notice with manual clone/import instructions, at most once per 24 hours across projects. Missing databases or drivers are reported as unavailable. `/guardrails-js:threat-data` and `/guardrails-js:doctor` expose diagnostics.
+For example, the full database built on September 14, 2026 held **221,353 package names and 221,750 threat records**, about **67 MB**. These counts change with the feed. They do not mean every version of every listed package is unsafe.
 
-Run these from the plugin directory (or use the absolute path shown by the notice):
+The bundled file stays at 30 packages even after a full download. Check the **active database**, not just the file inside the plugin checkout.
 
-```bash
-node dist/threat-data.mjs status
-node dist/threat-data.mjs setup
-node dist/threat-data.mjs refresh --force
-git clone --depth 1 --single-branch --branch threat-data https://github.com/subhashdasyam/guardrails-js.git guardrails-threat-data
-node dist/threat-data.mjs import ./guardrails-threat-data
+Package checks look up names through a SQLite index instead of loading a huge JavaScript data file. Ordinary code writes do not open the database. The full feed is not packed into the hook scripts. Online OSV checks for other known security issues are separate from this local malware database.
+
+### When does it download?
+
+The defaults are `network: true`, `threatDataAutoRefresh: true`, and `threatDataRefreshHours: 24`.
+
+1. A session-start, file-write, or Bash hook checks whether an update is due.
+2. If it is due, the hook starts a separate background worker. On Node 20, that worker first sets up SQLite if needed.
+3. The worker gets and checks the new data. Package checks keep using the current database while this happens.
+4. Only a valid database becomes active. After success, the next check is due in 24 hours by default.
+
+The hook does not wait for this download. Setup or a source build can take several minutes. If the published database has not changed, the worker fetches its small `manifest.json` file but skips downloading the database again.
+
+There is no daily system task installed on your machine. A hook must run to start a due update, including during a long Claude session. If Claude is closed, the next session can start the next check.
+
+### What if GitHub is blocked?
+
+The worker tries these methods in order:
+
+1. Download `manifest.json` and `threat-data.db` from this repo's `threat-data` branch through `raw.githubusercontent.com`.
+2. If that fails, use Git to clone just the `threat-data` branch from `github.com`. Only the database and its manifest are imported, not plugin code.
+3. If cloning fails too, download the original [OSV npm feed](https://osv-vulnerabilities.storage.googleapis.com/npm/all.zip) and fetch popular package names from the npm registry. Build the same SQLite database locally, using the same code as the GitHub workflow.
+
+Failed methods are saved in `update-state.json`, so each new session does not keep trying a blocked URL. A first temporary failure waits one hour; a second waits two hours. A blocked, missing, or bad-certificate response, or three failures in a row, pauses that method for seven days. Other methods can still work during that wait. A retry starts only when a later hook runs and a check is due.
+
+If npm blocks the popular-name search, the build keeps the bundled popular names and records a warning. That does not stop the OSV threat-data update. If every method fails, the current database stays in use. `refresh --force` clears the saved waits and tries the methods again in order, stopping at the first success.
+
+### Where is the active database?
+
+Claude supplies `CLAUDE_PLUGIN_DATA`. The plugin stores its database and update state in a `threat` folder below that path. For a Claude install, this can be:
+
+```text
+~/.claude/plugins/data/guardrails-js-guardrails-js/threat/
 ```
 
-Manual imports require both `threat-data.db` and `manifest.json`. They reject stale, corrupt, or incompatible snapshots. Behind a completely blocked network, transfer these files from another machine. Node 20 also requires its native driver; use `setup` while connected, or use Node 22.13+ to avoid a driver download. `network: false` disables automatic downloads and driver installation; manual import of local files remains available with a working driver.
+If `CLAUDE_PLUGIN_DATA` is not set, the plugin uses `~/.claude/plugins/data/guardrails-js/threat/` instead. **These are different folders.** A terminal command without Claude's data path may show the 30-package starting set even when Claude already has the full database.
 
-For development, `GUARDRAILS_THREAT_SNAPSHOT` selects a snapshot directory and `GUARDRAILS_SQLITE_DRIVER=sqlite3` exercises the compatibility backend. `GUARDRAILS_SQLITE_RUNTIME` can select a prepared driver directory on the same platform/architecture. `GUARDRAILS_THREAT_MAINTENANCE=off` disables background maintenance and notices in tests. These overrides are not needed for normal installation.
+Inside the data folder, `active.json` points to `snapshots/<sha256>/threat-data.db`. Each different database gets its own folder. The worker checks the file size, SHA-256 hash, database structure, record counts, and source date before switching the active copy. The previous copy is kept so a check already using it can finish safely.
+
+The hash helps catch damaged or mismatched files. It does not protect against someone taking over the source repo and replacing both the database and its manifest.
+
+### Check or refresh it
+
+Inside Claude, run `/guardrails-js:threat-data`. It shows status; ask it to refresh to start an update now. `/guardrails-js:doctor` also helps find setup problems.
+
+In status output, look at `file`, `backend`, `metadata.seedOnly`, `metadata.packages`, and `metadata.sourceUpdated`. A full database has `seedOnly: false`. `updates.source` shows whether the last successful update used `download`, `clone`, or `sources`.
+
+For terminal use, first get the plugin and data paths from Claude. This Bash example uses a common data path; change it if yours is different. Run from your project folder so the command reads that project's `.guardrails-js.json`:
+
+```bash
+export CLAUDE_PLUGIN_DATA="$HOME/.claude/plugins/data/guardrails-js-guardrails-js"
+guardrails_cli="/absolute/path/to/guardrails-js/dist/threat-data.mjs"
+
+node "$guardrails_cli" status
+# Install the SQLite driver if needed. Does not download threat data.
+node "$guardrails_cli" setup
+# Request an update now, even if the next check is not due yet.
+node "$guardrails_cli" refresh --force
+```
+
+### Old data and manual updates
+
+If the source data is more than seven days old, a hook asks Claude to tell you and show manual update steps. That warning is sent at most once every 24 hours across projects using the same data folder. Missing databases or SQLite drivers also get a warning. The age comes from the source date, not the day you downloaded or copied the file.
+
+To get a fresh copy by hand, keep the same `CLAUDE_PLUGIN_DATA` and `guardrails_cli` values from above, then run:
+
+```bash
+git clone --depth 1 --single-branch --branch threat-data https://github.com/subhashdasyam/guardrails-js.git guardrails-threat-data
+node "$guardrails_cli" import ./guardrails-threat-data
+```
+
+Use a new clone folder each time. If this machine cannot reach any source, get **both** `threat-data.db` and `manifest.json` on another machine, copy them into one folder here, and import that folder. Imports reject broken files, the wrong database format, data older than your active copy, and data more than seven days old.
+
+`network: false` stops online checks, threat-data downloads, and SQLite driver downloads. It does not stop local checks or old-data warnings. You can still import local files if SQLite is ready. On Node 20, run `setup` while connected first, or use Node 22.13+ to avoid a driver download.
+
+To stop only automatic threat-data updates while keeping online package checks, set `threatDataAutoRefresh: false`. You can still request a refresh by hand when `network` is on.
+
+### What GitHub Actions does
+
+The [threat-data workflow](.github/workflows/threat-data.yml) is scheduled daily at **04:17 UTC**. GitHub may start it later if runners are busy. It can also run by hand or after changes to the data update code and source files.
+
+It reads the OSV npm feed, keeps reports marked as malicious, adds the hand-picked starting entries, and gets popular package names. It skips withdrawn OSV reports and rebuilds from the current feed so removed reports can drop out. This is not a full offline copy of every OSV security advisory.
+
+Before publishing, it checks the database with both SQLite drivers, runs tests, and measures hook speed with the full database. It refuses to publish the small starting set, a database with fewer than 1,000 package names, or source data more than seven days old.
+
+It publishes `threat-data.db`, `manifest.json`, and `summary.md` to the [threat-data branch](https://github.com/subhashdasyam/guardrails-js/tree/threat-data). It builds the plugin for testing but does not commit new hook scripts or release a plugin version each day. Downloading threat data updates the data only, not the plugin code.
+
+For tests, `GUARDRAILS_THREAT_SNAPSHOT` selects a database folder and `GUARDRAILS_SQLITE_DRIVER=sqlite3` forces the extra driver. `GUARDRAILS_SQLITE_RUNTIME` points to a prepared driver folder for the same operating system and CPU type. `GUARDRAILS_THREAT_MAINTENANCE=off` stops background updates and notices in tests. Normal installs do not need these settings.
 
 ## 🔒 Privacy
 
-The npm check asks `api.osv.dev` and `registry.npmjs.org` about packages you are about to install, so package names leave your machine. Daily threat-data updates also contact this repository on GitHub, with OSV's Google Cloud Storage feed and the npm registry as fallbacks. Node 20 compatibility setup contacts npm and the driver's binary host. Set `"network": false` to disable these network operations. Offline checks use the installed SQLite snapshot (or the small bundled baseline) and require a working SQLite backend.
+Online package checks send package names and versions to `api.osv.dev` and `registry.npmjs.org`. Threat-data updates contact GitHub, or the OSV feed and npm registry if GitHub fails. Node 20 driver setup also contacts npm and the host for the driver's binary. Set `"network": false` to stop these requests. Local database checks still work if SQLite is ready.
 
 **Your file contents are never sent anywhere.** Not to me, not to a model, not to any service. The analyzer runs entirely on your machine.
 
@@ -684,11 +777,12 @@ The npm check asks `api.osv.dev` and `registry.npmjs.org` about packages you are
 
 ```bash
 npm ci --ignore-scripts
-npm test              # 374 rule, engine, parity, supply chain, network, and dependency tests
 npm run build         # rebuild dist/, which is committed
+node dist/threat-data.mjs setup  # needed before tests on Node 20
+npm test              # rule, engine, package, network, and threat-data tests
 npm run check:dist    # fail if the committed bundle is stale
 npm run bench         # latency budget
-node test/hooks.contract.mjs
+node --import ./test/setup.mjs test/hooks.contract.mjs
 ```
 
 Every rule needs one case that must fire and at least two safe lookalikes that must not, in `test/cases/`. On top of that, `test/corpus/` holds correct code full of near misses, and **any finding there fails the build**. That gate is what stops the rule set turning into noise. It has already caught seven false positives in my own rules.
@@ -697,7 +791,9 @@ If a rule fires on correct code, that is a bug worth reporting. The corpus exist
 
 ### 📐 Two measurements worth knowing
 
-**The latency gate measures the plugin, not the machine.** Absolute wall clock varies by more than the thing being measured, so it compares against a bare node process and against the hook loading and exiting early. On a development machine: 20 ms to load the bundle, 2 ms to scan a clean file, 15 ms to scan one with findings. Node startup accounts for the rest of the roughly 37 ms a write costs end to end.
+**The latency check looks for slower hooks, not a late GitHub job.** It measures time inside the test, not how long the job waited for a runner. It warms up first and uses the middle result from 25 runs. Hook load time is compared with a bare Node process; scan time is compared with a hook that loads but skips the file. This reduces runner noise but cannot remove it all, so repeat a failed check before blaming the code.
+
+The limits are 90 ms for added hook load time, 10 ms for a clean scan, and 70 ms for a scan with findings. A separate 100 ms limit covers opening SQLite, looking up three names by index, and closing it. The daily data workflow runs this check against the full database. Download time is not part of these limits.
 
 **Vue and Svelte components are parsed in two halves.** The `<script>` block goes through a real parser, with byte offsets preserved so line numbers need no mapping. The markup goes through a small attribute scanner instead of the framework's own compiler.
 
