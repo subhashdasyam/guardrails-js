@@ -296,6 +296,78 @@ test('at most four packages are looked up', async () => {
   assert.ok(calls.length <= 4, `expected at most four lookups, made ${calls.length}`);
 });
 
+test('maintainer changes survive response expiry and remain visible on cached enrichment', async () => {
+  const dir = isolate();
+  const step = 6 * 60 * 60 * 1000 + 1;
+  const now = Date.now();
+  let maintainers = [{ name: 'bob' }, { name: 'alice' }, { name: 'bob' }];
+  const calls = stubFetch(() => ({ maintainers }));
+
+  assert.equal((await queryRegistry('example', 100, now - 2 * step)).maintainerChange, null);
+  const baseline = fs.readdirSync(path.join(dir, 'cache')).find((file) => file.startsWith('maintainers-'));
+  const readBaseline = () => JSON.parse(fs.readFileSync(path.join(dir, 'cache', baseline), 'utf8')).value;
+  assert.deepEqual(readBaseline(), ['alice', 'bob']);
+
+  maintainers = [{ name: 'alice' }, { name: 'bob' }];
+  assert.equal((await queryRegistry('example', 100, now - step)).maintainerChange, null);
+  maintainers = [{ name: 'bob' }, { name: 'carol' }];
+  const changed = await queryRegistry('example', 100, now);
+  assert.deepEqual(changed.maintainerChange, { added: ['carol'], removed: ['alice'] });
+  assert.deepEqual(readBaseline(), ['bob', 'carol']);
+  assert.deepEqual(await queryRegistry('example', 100, now + 1), changed);
+  const notes = await enrich([{ name: 'example' }], 100);
+  assert.ok(notes.includes('example: This package\'s maintainer list changed since your last check. Review before upgrading. (added: "carol"; removed: "alice")'));
+  assert.equal(calls.length, 3, 'cached enrichment must not make another request');
+
+  assert.equal((await queryRegistry('example', 100, now + step)).maintainerChange, null);
+});
+
+test('invalid maintainer data and failed requests preserve the persistent baseline', async () => {
+  const dir = isolate();
+  const step = 6 * 60 * 60 * 1000 + 1;
+  let now = Date.now();
+  let body = { maintainers: [{ name: 'alice' }] };
+  stubFetch(() => body);
+  await queryRegistry('example', 100, now);
+  const baseline = fs.readdirSync(path.join(dir, 'cache')).find((file) => file.startsWith('maintainers-'));
+  const readBaseline = () => fs.readFileSync(path.join(dir, 'cache', baseline), 'utf8');
+  const original = readBaseline();
+
+  for (const maintainers of [undefined, null, [], 'alice', [{}], [{ name: 42 }],
+    [{ name: ' ' }], [{ name: 'bob' }, null], [{ name: 'bob\nforged warning' }]]) {
+    body = { maintainers };
+    assert.equal((await queryRegistry('example', 100, now += step)).maintainerChange, null);
+    assert.equal(readBaseline(), original);
+  }
+  globalThis.fetch = async () => { throw new Error('offline'); };
+  assert.equal(await queryRegistry('example', 100, now += step), null);
+  assert.equal(readBaseline(), original);
+  stubFetch(() => ({ maintainers: [{ name: 'bob' }] }));
+  assert.deepEqual((await queryRegistry('example', 100, now += step)).maintainerChange,
+    { added: ['bob'], removed: ['alice'] });
+});
+
+test('old registry caches remain readable and scoped baselines have distinct filenames', async () => {
+  const dir = isolate();
+  const now = Date.now();
+  const step = 6 * 60 * 60 * 1000 + 1;
+  fs.mkdirSync(path.join(dir, 'cache'));
+  fs.writeFileSync(path.join(dir, 'cache', 'npm-example.json'), JSON.stringify({
+    at: now, value: { exists: true, ageDays: null, versionCount: 3, repository: 'https://example.com' },
+  }));
+  const calls = stubFetch(() => ({ maintainers: [{ name: 'alice' }] }));
+  assert.deepEqual(await enrich([{ name: 'example' }], 100), []);
+  assert.equal(calls.length, 0);
+  assert.equal((await queryRegistry('example', 100, now + step)).maintainerChange, null);
+
+  // These names collide under the old response-cache filename sanitization.
+  await queryRegistry('@scope/pkg', 100, now);
+  stubFetch(() => ({ maintainers: [{ name: 'bob' }] }));
+  assert.equal((await queryRegistry('@scope-pkg', 100, now + step)).maintainerChange, null);
+  const baselines = fs.readdirSync(path.join(dir, 'cache')).filter((file) => file.startsWith('maintainers-'));
+  assert.equal(baselines.length, 3);
+});
+
 test('the manifest pass gives up rather than overrunning the hook that called it', async () => {
   // The lookups run one after another, so ten pins against a network that never
   // answers is ten timeouts end to end. SessionStart has its own timeout and is

@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -25,10 +26,10 @@ function cacheFile(key) {
   return path.join(cacheDir(), `${safe}.json`);
 }
 
-function readCache(key, now) {
+function readCache(key, now, maxAge = CACHE_TTL_MS) {
   try {
     const raw = JSON.parse(fs.readFileSync(cacheFile(key), 'utf8'));
-    if (now - raw.at > CACHE_TTL_MS) return null;
+    if (now - raw.at > maxAge) return null;
     return raw.value;
   } catch {
     return null;
@@ -108,6 +109,25 @@ export async function queryOsv(packages, timeoutMs = 2000, now = Date.now()) {
   return results;
 }
 
+/** Compare a valid observation with the persistent maintainer baseline. */
+function maintainerChange(name, maintainers, now) {
+  if (!Array.isArray(maintainers) || maintainers.length === 0) return null;
+  if (maintainers.some((entry) => typeof entry?.name !== 'string' ||
+    !entry.name.trim() || /[\u0000-\u001f\u007f]/.test(entry.name))) return null;
+
+  const names = [...new Set(maintainers.map((entry) => entry.name.trim()))].sort();
+  // Separate persistent observations from expiring registry responses. Hashing
+  // avoids filename collisions between scoped names and names containing '-'.
+  const key = `maintainers-${createHash('sha256').update(name).digest('hex')}`;
+  const previous = readCache(key, now, Infinity);
+  const validPrevious = Array.isArray(previous) && previous.length > 0 &&
+    previous.every((entry) => typeof entry === 'string' && entry.length > 0);
+  const added = validPrevious ? names.filter((entry) => !previous.includes(entry)) : [];
+  const removed = validPrevious ? previous.filter((entry) => !names.includes(entry)) : [];
+  writeCache(key, names, now);
+  return added.length || removed.length ? { added, removed } : null;
+}
+
 /** Registry facts that say how new and how used a package is. */
 export async function queryRegistry(name, timeoutMs = 2000, now = Date.now()) {
   const key = `npm-${name}`;
@@ -137,6 +157,7 @@ export async function queryRegistry(name, timeoutMs = 2000, now = Date.now()) {
     versionCount: Object.keys(json.versions ?? {}).length,
     repository: json.repository?.url ?? null,
     deprecated: Boolean(json.versions?.[latest]?.deprecated),
+    maintainerChange: maintainerChange(name, json.maintainers, now),
   };
 
   writeCache(key, value, now);
@@ -308,6 +329,14 @@ export async function enrich(packages, timeoutMs = 2000) {
     }
     if (info.deprecated) {
       notes.push(`${pkg.name} latest version is marked deprecated`);
+    }
+    if (info.maintainerChange) {
+      const { added, removed } = info.maintainerChange;
+      const details = [
+        added.length ? `added: ${added.map((name) => JSON.stringify(name)).join(', ')}` : '',
+        removed.length ? `removed: ${removed.map((name) => JSON.stringify(name)).join(', ')}` : '',
+      ].filter(Boolean).join('; ');
+      notes.push(`${pkg.name}: This package's maintainer list changed since your last check. Review before upgrading. (${details})`);
     }
   });
 

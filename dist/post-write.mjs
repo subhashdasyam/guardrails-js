@@ -16618,6 +16618,7 @@ var require_semver2 = __commonJS({
 import fs10 from "node:fs";
 import os3 from "node:os";
 import path12 from "node:path";
+import { createHash } from "node:crypto";
 function cacheDir() {
   const base = process.env.CLAUDE_PLUGIN_DATA || path12.join(os3.homedir(), ".claude", "plugins", "data", "guardrails-js");
   return path12.join(base, "cache");
@@ -16626,10 +16627,10 @@ function cacheFile(key) {
   const safe = String(key).replace(/[^A-Za-z0-9_.@-]/g, "-");
   return path12.join(cacheDir(), `${safe}.json`);
 }
-function readCache(key, now) {
+function readCache(key, now, maxAge = CACHE_TTL_MS) {
   try {
     const raw = JSON.parse(fs10.readFileSync(cacheFile(key), "utf8"));
-    if (now - raw.at > CACHE_TTL_MS) return null;
+    if (now - raw.at > maxAge) return null;
     return raw.value;
   } catch {
     return null;
@@ -16658,6 +16659,18 @@ async function fetchJson(url, options, timeoutMs) {
     clearTimeout(timer);
   }
 }
+function maintainerChange(name, maintainers, now) {
+  if (!Array.isArray(maintainers) || maintainers.length === 0) return null;
+  if (maintainers.some((entry) => typeof entry?.name !== "string" || !entry.name.trim() || /[\u0000-\u001f\u007f]/.test(entry.name))) return null;
+  const names = [...new Set(maintainers.map((entry) => entry.name.trim()))].sort();
+  const key = `maintainers-${createHash("sha256").update(name).digest("hex")}`;
+  const previous = readCache(key, now, Infinity);
+  const validPrevious = Array.isArray(previous) && previous.length > 0 && previous.every((entry) => typeof entry === "string" && entry.length > 0);
+  const added = validPrevious ? names.filter((entry) => !previous.includes(entry)) : [];
+  const removed = validPrevious ? previous.filter((entry) => !names.includes(entry)) : [];
+  writeCache(key, names, now);
+  return added.length || removed.length ? { added, removed } : null;
+}
 async function queryRegistry(name, timeoutMs = 2e3, now = Date.now()) {
   const key = `npm-${name}`;
   const cached = readCache(key, now);
@@ -16679,7 +16692,8 @@ async function queryRegistry(name, timeoutMs = 2e3, now = Date.now()) {
     ageDays: latestPublished ? Math.floor((now - new Date(latestPublished).getTime()) / 864e5) : null,
     versionCount: Object.keys(json.versions ?? {}).length,
     repository: json.repository?.url ?? null,
-    deprecated: Boolean(json.versions?.[latest]?.deprecated)
+    deprecated: Boolean(json.versions?.[latest]?.deprecated),
+    maintainerChange: maintainerChange(name, json.maintainers, now)
   };
   writeCache(key, value, now);
   return value;
