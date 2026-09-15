@@ -160,6 +160,26 @@ A bare name covers every version of it. An exact pin covers only that one. Allow
 
 Tests use fake network replies, so they need no network and cannot quietly pass by timing out. 🧪
 
+### Maintainer changes
+
+Existing npm registry lookups also save a local baseline of maintainer names.
+The first valid lookup is silent; later fresh lookups compare names, ignoring
+order and duplicates. If membership changes, an existing install prompt can add:
+“This package's maintainer list changed since your last check. Review before
+upgrading.” Added and removed names appear as supporting details. A change does
+not establish that a package is malicious.
+
+Baselines are persistent `cache/maintainers-<hash>.json` files under the plugin
+data directory, separate from the six-hour registry response cache. A detected
+change remains in that response cache until it is refreshed; a subsequent
+unchanged response clears the note. Failed requests and missing, empty or
+malformed maintainer lists leave the baseline untouched.
+
+This adds no requests or approval triggers. Warnings appear only in existing
+install-prompt enrichment, which checks at most four named packages. It does not
+scan the full indirect dependency tree or reconstruct changes before the first
+observation. `"network": false` disables these lookups and observations.
+
 ---
 
 ## ⚡ Install
