@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "source": "osv/npm",
-  "sourceUpdated": "2026-10-17T03:03:08.000Z",
-  "builtAt": "2026-10-17T04:29:44.619Z",
+  "sourceUpdated": "2026-10-18T02:02:50.000Z",
+  "builtAt": "2026-10-18T04:31:09.507Z",
   "seedOnly": false,
   "scanned": 230382,
   "warnings": [
@@ -10,6 +10,6 @@
   ],
   "packages": 222341,
   "records": 222738,
-  "sha256": "bf0b9ce39b3250bd9f0fcd9e84c5d26a7e1230fcd4a754d4e6c6ce1c1cf5e267",
+  "sha256": "485b92bbb044d5e312e992016a406ba4d89ffc2615592d60e2b7a91484f7d4e0",
   "bytes": 67563520
 }
