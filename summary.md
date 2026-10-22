@@ -2,12 +2,12 @@
 
 Source: osv/npm
 
-Source snapshot: 2026-10-21T03:47:56.000Z
+Source snapshot: 2026-10-22T04:18:09.000Z
 
-Packages: 222516
+Packages: 222523
 
-Advisories: 222913
+Advisories: 222920
 
-SHA-256: d237d28d3ee1288b9c046de7c409d32451070c672c65214ca3d2fa230c6a9dc8
+SHA-256: d88f7eb2b7309b1847f1548a6e06951d9d6197d61c742f18975988be85f0055c
 
 Popularity refresh failed; retained bundled names: npm search HTTP 429
