@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "source": "osv/npm",
-  "sourceUpdated": "2026-11-27T01:48:48.000Z",
-  "builtAt": "2026-11-27T04:23:35.901Z",
+  "sourceUpdated": "2026-11-28T01:33:43.000Z",
+  "builtAt": "2026-11-28T04:22:38.995Z",
   "seedOnly": false,
-  "scanned": 233184,
+  "scanned": 233225,
   "warnings": [
     "Popularity refresh failed; retained bundled names: npm search HTTP 429"
   ],
-  "packages": 224794,
-  "records": 225191,
-  "sha256": "680772b08c301622f5dc46af1efd913952c4f1453f302a3da99dbc5a729b5118",
-  "bytes": 68399104
+  "packages": 224835,
+  "records": 225232,
+  "sha256": "2f9baeeb494a06c9e4b2071a86550b8ac345832d22dc70b6e1364e0457f12857",
+  "bytes": 68403200
 }
